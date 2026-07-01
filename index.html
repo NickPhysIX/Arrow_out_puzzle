@@ -37,7 +37,7 @@
   .pct{font-size:19px;font-weight:900;min-width:50px;text-align:right}
   .meta{width:100%;max-width:720px;display:flex;justify-content:space-between;gap:12px;padding:2px 20px 4px;font-size:14px;color:#8a8a8a}
   .meta b{color:var(--ink)}
-  .stage{position:relative;flex:1;width:100%;overflow:hidden;touch-action:none}
+  .stage{position:relative;flex:1;min-height:0;width:100%;overflow:hidden;touch-action:none}
   #board{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
   .body{fill:none;stroke:var(--arrow);stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
   .head{fill:none;stroke:var(--arrow);stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
@@ -46,20 +46,25 @@
   @keyframes rainbow{0%{stroke:#ff3b30}17%{stroke:#ff9500}33%{stroke:#ffcc00}50%{stroke:#34c759}67%{stroke:#00c7be}83%{stroke:#5e5ce6}100%{stroke:#ff3b30}}
   g.free .body,g.free .head{animation:rainbow .5s linear infinite}
   g.hl .body,g.hl .head{stroke:#007aff}
-  .zoombar{position:absolute;right:12px;bottom:12px;display:flex;flex-direction:column;gap:8px;z-index:5}
+  .zoombar{display:flex;gap:8px;justify-content:center}
   .zbtn{width:44px;height:44px;border:none;border-radius:14px;background:var(--cream-2);color:var(--ink);
     font-size:22px;font-weight:900;line-height:1;cursor:pointer;box-shadow:0 3px 0 var(--shadow);
     display:flex;align-items:center;justify-content:center;touch-action:manipulation}
   .zbtn:active{transform:translateY(2px);box-shadow:0 1px 0 var(--shadow)}
-  .zhint{position:absolute;left:12px;bottom:14px;font-size:12px;font-weight:800;color:#b3b3b3;z-index:5;pointer-events:none;
+  .zhint{position:absolute;left:12px;bottom:8px;font-size:12px;font-weight:800;color:#b3b3b3;z-index:5;pointer-events:none;
     transition:opacity .5s ease}
-  .controls{width:100%;max-width:720px;display:flex;gap:10px;padding:8px 20px calc(16px + env(safe-area-inset-bottom));flex-wrap:wrap;justify-content:center}
+  .controls{width:100%;max-width:720px;display:grid;gap:10px;padding:8px 20px calc(16px + env(safe-area-inset-bottom))}
+  .controlRow,.actionRow{display:flex;gap:10px;justify-content:center;align-items:center}
+  .controlRow{display:grid;grid-template-columns:minmax(0,1fr) auto}
+  .selectWrap{height:44px;border-radius:14px;background:var(--cream-2);box-shadow:0 3px 0 var(--shadow);
+    display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:8px;padding:0 12px;color:#8a8a8a;font-size:12px;font-weight:900}
+  .selectWrap select{min-width:0;width:100%;border:none;background:transparent;color:var(--ink);font:inherit;font-size:16px;font-weight:900;outline:none}
   button.btn{font-family:inherit;font-weight:900;font-size:16px;border:none;cursor:pointer;padding:12px 18px;border-radius:16px;color:var(--ink);background:var(--cream-2);box-shadow:0 3px 0 var(--shadow);transition:transform .08s,box-shadow .08s}
   button.btn:active{transform:translateY(2px);box-shadow:0 1px 0 var(--shadow)}
   button.btn.on{background:var(--ink);color:#fff;box-shadow:0 3px 0 #000}
   button.btn.primary{background:var(--crash);color:#fff;box-shadow:0 3px 0 #a02a2a}
   button.btn:focus-visible{outline:3px solid #007aff;outline-offset:2px}
-  .seg{display:flex;gap:8px}
+  .actionRow .btn{flex:1;max-width:220px}
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;z-index:20;padding:24px}
   .overlay.show{display:flex}
   .card{background:#fff;border-radius:26px;padding:28px 26px;max-width:360px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.3)}
@@ -89,22 +94,28 @@
   <div class="stage">
     <svg id="board" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
     <div class="zhint" id="zhint">pinch or drag to zoom</div>
-    <div class="zoombar">
+  </div>
+  <div class="controls">
+    <div class="controlRow">
+      <label class="selectWrap"><span>Difficulty</span>
+        <select id="diffSelect" aria-label="Difficulty">
+          <option value="easy">Easy</option>
+          <option value="medium">Medium</option>
+          <option value="hard">Hard</option>
+          <option value="veryHard">Very Hard</option>
+          <option value="extreme">Extreme</option>
+        </select>
+      </label>
+      <div class="zoombar" aria-label="Zoom controls">
       <button class="zbtn" id="zin" aria-label="Zoom in">+</button>
       <button class="zbtn" id="zout" aria-label="Zoom out">–</button>
       <button class="zbtn" id="zfit" aria-label="Fit board" style="font-size:18px">⤢</button>
+      </div>
     </div>
-  </div>
-  <div class="controls">
-    <div class="seg">
-      <button class="btn on" data-diff="easy">Easy</button>
-      <button class="btn" data-diff="medium">Medium</button>
-      <button class="btn" data-diff="hard">Hard</button>
-      <button class="btn" data-diff="veryHard">Very Hard</button>
-      <button class="btn" data-diff="extreme">Extreme</button>
+    <div class="actionRow">
+      <button class="btn" id="hintBtn">Show free</button>
+      <button class="btn primary" id="newBtn">New level</button>
     </div>
-    <button class="btn" id="hintBtn">Show free</button>
-    <button class="btn primary" id="newBtn">New level</button>
   </div>
   <div class="overlay" id="overlay"><div class="card">
     <h2 id="ovTitle"></h2><div class="stars" id="ovStars"></div><p id="ovText"></p>
@@ -116,7 +127,8 @@
 const SVGNS="http://www.w3.org/2000/svg";
 const store=(()=>{let ok=false;try{const k='__t';localStorage.setItem(k,'1');localStorage.removeItem(k);ok=true;}catch(e){}const mem={};
   return{get:k=>{try{return ok?localStorage.getItem(k):(mem[k]??null);}catch(e){return mem[k]??null;}},
-         set:(k,v)=>{try{ok?localStorage.setItem(k,v):(mem[k]=v);}catch(e){mem[k]=v;}}};})();
+         set:(k,v)=>{try{ok?localStorage.setItem(k,v):(mem[k]=v);}catch(e){mem[k]=v;}},
+         remove:k=>{try{ok?localStorage.removeItem(k):delete mem[k];}catch(e){delete mem[k];}}};})();
 
 const DIRS={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]};
 const DK=Object.keys(DIRS);
@@ -128,6 +140,7 @@ const DIFF={
   veryHard:{cols:24,rows:31,minLen:3,lo:9,longFrac:.38,curve:.55,candidates:8,label:"Very Hard"},
   extreme:{cols:28,rows:38,minLen:3,lo:10,longFrac:.42,curve:.48,candidates:9,label:"Extreme"}
 };
+const SAVE_KEY='arrowout_saved_game_v2';
 const MAX_STRIKES=3;
 const CELL=44;          // fixed board-space cell size; zoom is handled by the SVG viewBox
 // arrow look — tweak freely
@@ -137,7 +150,7 @@ const HEAD_HW =1.25;    // arrowhead half-width in stroke-widths
 const STUB    =0.55;    // shaft length for a single-cell arrow, in cells
 
 let cols,rows,cell=CELL,strokeW,pieces,occ,elmap,pieceById,diff='easy';
-let freed,total,strikes,running=false,animating=false,startT=0,timerId=null;
+let freed,total,strikes,running=false,animating=false,startT=0,elapsedBase=0,timerId=null;
 let BW=0,BH=0,vb={x:0,y:0,w:0,h:0},fitW=0,minW=0,userZoomed=false;   // view state
 const board=document.getElementById('board');
 const stage=document.querySelector('.stage');
@@ -407,8 +420,8 @@ function onClick(p){
     });
   }
 }
-function afterFree(){freed++;updateHUD();if(freed>=total)win();}
-function afterStrike(){if(strikes>=MAX_STRIKES)lose();}
+function afterFree(){freed++;updateHUD();if(freed>=total)win();else saveProgress();}
+function afterStrike(){if(strikes>=MAX_STRIKES)lose();else saveProgress();}
 
 /* ---------- hud / timer ---------- */
 function drawDrops(){const d=document.getElementById('drops');d.innerHTML='';
@@ -419,18 +432,21 @@ function updateHUD(){const pct=total?Math.round(100*freed/total):0;
   document.getElementById('pct').textContent=pct+'%';document.getElementById('fill').style.width=pct+'%';
   document.getElementById('freed').textContent=freed;document.getElementById('total').textContent=total;}
 function fmt(ms){const s=Math.floor(ms/1000);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
-function startTimer(){startT=performance.now();timerId=setInterval(()=>document.getElementById('time').textContent=fmt(performance.now()-startT),250);}
-function stopTimer(){if(timerId){clearInterval(timerId);timerId=null;}}
+function currentElapsed(){return elapsedBase+(startT?performance.now()-startT:0);}
+function paintTime(){document.getElementById('time').textContent=fmt(currentElapsed());}
+function startTimer(){if(timerId)return;startT=performance.now();timerId=setInterval(paintTime,250);paintTime();}
+function pauseTimer(){elapsedBase=currentElapsed();startT=0;if(timerId){clearInterval(timerId);timerId=null;}paintTime();}
+function stopTimer(){pauseTimer();}
 function bestKey(){return'arrowout_best_'+diff;}
 function showBest(){const b=store.get(bestKey());document.getElementById('best').textContent=b?fmt(Number(b)):'—';}
 
 /* ---------- end states ---------- */
-function win(){running=false;stopTimer();const el=startT?performance.now()-startT:0;
+function win(){const el=currentElapsed();running=false;stopTimer();clearProgress();
   const s=Math.max(1,3-strikes);const prev=store.get(bestKey());const isBest=el>0&&(!prev||el<Number(prev));
   if(isBest)store.set(bestKey(),String(Math.round(el)));showBest();
   overlay('win','Solved!','★★★'.slice(0,s)+'☆☆☆'.slice(0,3-s),
     `${fmt(el)} · ${strikes} strike${strikes===1?'':'s'}${isBest?' · new best!':''}`);}
-function lose(){running=false;stopTimer();overlay('lose','Out of tries','',`You freed ${freed} of ${total}. Read the free arrows first.`);}
+function lose(){running=false;stopTimer();clearProgress();overlay('lose','Out of tries','',`You freed ${freed} of ${total}. Read the free arrows first.`);}
 function overlay(kind,title,stars,text){document.getElementById('ovTitle').textContent=title;
   document.getElementById('ovTitle').className=kind;document.getElementById('ovStars').textContent=stars;
   document.getElementById('ovText').textContent=text;document.getElementById('overlay').classList.add('show');}
@@ -438,6 +454,16 @@ function overlay(kind,title,stars,text){document.getElementById('ovTitle').textC
 /* ---------- lifecycle ---------- */
 let savedPieces=null;
 function snapshot(){savedPieces=pieces.map(p=>({id:p.id,dir:p.dir,hx:p.hx,hy:p.hy,cells:p.cells.map(c=>[c[0],c[1]])}));}
+function clearProgress(){store.remove(SAVE_KEY);}
+function saveProgress(){
+  if(!running||!pieces||!savedPieces||!total)return;
+  const data={
+    v:2,diff,freed,total,strikes,elapsedMs:Math.round(currentElapsed()),
+    pieces:pieces.map(p=>({id:p.id,dir:p.dir,hx:p.hx,hy:p.hy,alive:!!p.alive,cells:p.cells.map(c=>[c[0],c[1]])})),
+    savedPieces:savedPieces.map(p=>({id:p.id,dir:p.dir,hx:p.hx,hy:p.hy,cells:p.cells.map(c=>[c[0],c[1]])}))
+  };
+  store.set(SAVE_KEY,JSON.stringify(data));
+}
 function restoreSaved(){
   const cfg=DIFF[diff];cols=cfg.cols;rows=cfg.rows;
   occ=Array.from({length:rows},()=>Array(cols).fill(-1));
@@ -445,34 +471,53 @@ function restoreSaved(){
   for(const p of pieces)for(const[x,y]of p.cells)occ[y][x]=p.id;
   total=pieces.length;
 }
-function startPlay(){
-  freed=0;strikes=0;startT=0;running=true;
-  document.getElementById('time').textContent='0:00';
+function rebuildOcc(){
+  occ=Array.from({length:rows},()=>Array(cols).fill(-1));
+  for(const p of pieces)if(p.alive)for(const[x,y]of p.cells)occ[y][x]=p.id;
+}
+function syncDifficultyUI(){
+  document.getElementById('diffLabel').textContent=DIFF[diff].label;
+  const sel=document.getElementById('diffSelect');if(sel)sel.value=diff;
+}
+function startPlay(opts={}){
+  freed=opts.freed??0;strikes=opts.strikes??0;elapsedBase=opts.elapsedMs??0;startT=0;running=true;
+  paintTime();
   drawDrops();updateHUD();showBest();
   gp.clear();grab=tap=pinch=null;vb.w=0;
   render();
   requestAnimationFrame(fitView);
 }
+function loadProgress(){
+  const raw=store.get(SAVE_KEY);if(!raw)return false;
+  try{
+    const data=JSON.parse(raw);
+    if(!data||data.v!==2||!DIFF[data.diff]||!Array.isArray(data.pieces)||!Array.isArray(data.savedPieces))throw new Error('bad save');
+    diff=data.diff;const cfg=DIFF[diff];cols=cfg.cols;rows=cfg.rows;
+    pieces=data.pieces.map(p=>({id:p.id,dir:p.dir,hx:p.hx,hy:p.hy,alive:p.alive!==false,cells:p.cells.map(c=>[c[0],c[1]])}));
+    savedPieces=data.savedPieces.map(p=>({id:p.id,dir:p.dir,hx:p.hx,hy:p.hy,cells:p.cells.map(c=>[c[0],c[1]])}));
+    total=data.total||pieces.length;freed=data.freed??pieces.filter(p=>!p.alive).length;strikes=data.strikes??0;
+    rebuildOcc();syncDifficultyUI();startPlay({freed,strikes,elapsedMs:data.elapsedMs||0});return true;
+  }catch(e){clearProgress();return false;}
+}
 function newLevel(){
-  document.getElementById('overlay').classList.remove('show');animating=false;
-  document.getElementById('diffLabel').textContent=DIFF[diff].label;
+  document.getElementById('overlay').classList.remove('show');animating=false;clearProgress();syncDifficultyUI();
   let genTries=0;
   do{generate();genTries++;}while(genTries<4&&total<8);
   snapshot();
   startPlay();
+  saveProgress();
 }
 function restartSame(){                          // replay the identical board (used after 3 strikes)
   if(!savedPieces){newLevel();return;}
-  document.getElementById('overlay').classList.remove('show');animating=false;
+  document.getElementById('overlay').classList.remove('show');animating=false;clearProgress();
   restoreSaved();
   startPlay();
+  saveProgress();
 }
 function hint(){if(!running||animating)return;
   for(const p of pieces){if(p.alive&&freeInfo(p).free){const g=elmap.get(p.id).g;g.classList.add('hl');setTimeout(()=>g.classList.remove('hl'),1000);}}}
 
-document.querySelectorAll('[data-diff]').forEach(b=>b.addEventListener('click',()=>{
-  document.querySelectorAll('[data-diff]').forEach(x=>x.classList.remove('on'));b.classList.add('on');
-  diff=b.dataset.diff;stopTimer();newLevel();}));
+document.getElementById('diffSelect').addEventListener('change',e=>{diff=e.target.value;stopTimer();newLevel();});
 document.getElementById('newBtn').addEventListener('click',()=>{stopTimer();newLevel();});
 document.getElementById('ovNext').addEventListener('click',()=>{stopTimer();newLevel();});
 document.getElementById('ovRetry').addEventListener('click',()=>{stopTimer();restartSame();});
@@ -481,8 +526,10 @@ let rt;addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(()=>{
   if(!vb.w)return;
   if(userZoomed){fitW=calcFitW();minW=Math.min(fitW,6.5*cell);clampView();}else fitView();
 },150);});
+addEventListener('pagehide',saveProgress);
+addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')saveProgress();});
 if('serviceWorker'in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
-newLevel();
+if(!loadProgress())newLevel();
 </script>
 </body>
 </html>
