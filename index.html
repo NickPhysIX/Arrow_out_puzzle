@@ -224,6 +224,7 @@ function attemptGenerate(){
       const[tx,ty]=p.cells[p.cells.length-1];
       const opts=[];
       for(const nd of DK){
+        if(p.cells.length===1&&nd!==OPP[p.dir])continue;   // first body cell stays inline behind the head
         const[dx,dy]=DIRS[nd],nx=tx+dx,ny=ty+dy;
         if(!inb(nx,ny))continue;
         const oid=occ[ny][nx],op=live.get(oid);
