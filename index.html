@@ -134,13 +134,13 @@ const DIRS={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]};
 const DK=Object.keys(DIRS);
 const OPP={up:"down",down:"up",left:"right",right:"left"};
 const DIFF={
-  easy:{cols:12,rows:16,minLen:3,lo:5,longFrac:.28,curve:.78,candidates:6,label:"Easy"},
-  medium:{cols:16,rows:21,minLen:3,lo:6,longFrac:.30,curve:.72,candidates:7,label:"Medium"},
-  hard:{cols:20,rows:26,minLen:3,lo:8,longFrac:.34,curve:.62,candidates:8,label:"Hard"},
-  veryHard:{cols:24,rows:31,minLen:3,lo:9,longFrac:.38,curve:.55,candidates:8,label:"Very Hard"},
-  extreme:{cols:28,rows:38,minLen:3,lo:10,longFrac:.42,curve:.48,candidates:9,label:"Extreme"}
+  easy:{cols:7,rows:9,minLen:4,maxLen:12,targetFill:.80,candidates:6,label:"Easy"},
+  medium:{cols:10,rows:13,minLen:6,maxLen:18,targetFill:.90,candidates:7,label:"Medium"},
+  hard:{cols:14,rows:18,minLen:8,maxLen:30,targetFill:.95,candidates:8,label:"Hard"},
+  veryHard:{cols:20,rows:26,minLen:10,maxLen:45,targetFill:.95,candidates:8,label:"Very Hard"},
+  extreme:{cols:28,rows:38,minLen:12,maxLen:70,targetFill:.95,candidates:8,label:"Extreme"}
 };
-const SAVE_KEY='arrowout_saved_game_v2';
+const SAVE_KEY='arrowout_saved_game_v3';
 const MAX_STRIKES=3;
 const CELL=44;          // fixed board-space cell size; zoom is handled by the SVG viewBox
 // arrow look — tweak freely
@@ -174,72 +174,152 @@ function pickWeighted(opts){
   for(const o of opts){r-=o.w;if(r<=0)return o;}
   return opts[opts.length-1];
 }
-// Grow one snake: head at (hx,hy) pointing dir. First body cell sits straight behind the head
-// (inline arrowhead), then a weighted walk that favours bends. Stops at target length or when stuck.
-function growSnake(hx,hy,dir,target){
-  const cells=[[hx,hy]];
-  const bx=hx-DIRS[dir][0],by=hy-DIRS[dir][1];
-  if(!(inb(bx,by)&&occ[by][bx]===-1))return cells;   // no inline room -> length 1 (rejected below minLen)
-  cells.push([bx,by]);let cx=bx,cy=by,last=OPP[dir];
-  if(target>=3){                                    // second straight cell -> two collinear cells behind the head
-    const b2x=bx-DIRS[dir][0],b2y=by-DIRS[dir][1];
-    if(inb(b2x,b2y)&&occ[b2y][b2x]===-1){cells.push([b2x,b2y]);cx=b2x;cy=b2y;}
-    else return cells;                              // only one straight cell available -> stay length 2 (rejected if <minLen)
-  }
-  while(cells.length<target){
-    const opts=[];
-    for(const nd of DK){
-      if(nd===OPP[last])continue;                     // no immediate reversal
-      const[dx,dy]=DIRS[nd],nx=cx+dx,ny=cy+dy;
-      if(!inb(nx,ny)||occ[ny][nx]!==-1)continue;
-      if(cells.some(([ex,ey])=>ex===nx&&ey===ny))continue;
-      if(onRay(hx,hy,dir,nx,ny))continue;             // never cross the head's own escape ray
-      const turn=nd===last?1:2.4;                     // favour turns -> windier snakes
-      const compact=1+depthOf(nx,ny)*0.15;            // lean toward the interior
-      opts.push({nx,ny,nd,w:turn*compact});
-    }
-    if(!opts.length)break;
-    const next=pickWeighted(opts);
-    cells.push([next.nx,next.ny]);cx=next.nx;cy=next.ny;last=next.nd;
-  }
-  return cells;
+function dirBetween(a,b){
+  const dx=b[0]-a[0],dy=b[1]-a[1];
+  return DK.find(d=>DIRS[d][0]===dx&&DIRS[d][1]===dy)||null;
 }
-function targetLength(cfg){
-  const physical=cols*rows;
-  const softMax=Math.max(cfg.lo+1,Math.floor(physical*(cfg.longFrac||.35)));
-  const span=Math.max(1,softMax-cfg.lo+1);
-  return cfg.lo+Math.floor(Math.pow(Math.random(),cfg.curve||.65)*span);
+function walkState(cells,headDir){
+  if(cells.length<2)return{last:OPP[headDir],run:1};
+  let last=dirBetween(cells[cells.length-2],cells[cells.length-1])||OPP[headDir],run=1;
+  for(let i=cells.length-2;i>0;i--){
+    const d=dirBetween(cells[i-1],cells[i]);
+    if(d===last)run++;else break;
+  }
+  return{last,run};
+}
+function freeNeighborCount(x,y,used){
+  let n=0;
+  for(const d of DK){const[dx,dy]=DIRS[d],nx=x+dx,ny=y+dy;
+    if(inb(nx,ny)&&occ[ny][nx]===-1&&!used.has(nx+','+ny))n++;}
+  return n;
+}
+function growOptions(hx,hy,headDir,cells,last,run){
+  const used=new Set(cells.map(c=>c[0]+','+c[1]));
+  const[cx,cy]=cells[cells.length-1],opts=[];
+  for(const nd of DK){
+    if(nd===OPP[last])continue;                       // no immediate reversal
+    const[dx,dy]=DIRS[nd],nx=cx+dx,ny=cy+dy,key=nx+','+ny;
+    if(!inb(nx,ny)||occ[ny][nx]!==-1||used.has(key))continue;
+    if(onRay(hx,hy,headDir,nx,ny))continue;           // never cross the head's escape ray
+    const straight=nd===last;
+    const runBias=straight?(run<3?5.2:1.35):(run>=2?2.25:.8);
+    const space=1+freeNeighborCount(nx,ny,used)*.28;  // avoid dead ends when possible
+    const compact=1+depthOf(nx,ny)*.08;
+    opts.push({nx,ny,nd,w:runBias*space*compact});
+  }
+  return opts;
+}
+// Grow one snake backwards from the head. It now retries/backtracks locally so long snakes can
+// span commercial-looking corridors instead of dying as tight zig-zags.
+function growSnake(hx,hy,dir,target,minAccept){
+  const seed=[[hx,hy]];
+  const bx=hx-DIRS[dir][0],by=hy-DIRS[dir][1];
+  if(!(inb(bx,by)&&occ[by][bx]===-1))return seed;
+  seed.push([bx,by]);
+  if(target>=3){
+    const b2x=bx-DIRS[dir][0],b2y=by-DIRS[dir][1];
+    if(inb(b2x,b2y)&&occ[b2y][b2x]===-1)seed.push([b2x,b2y]);
+    else return seed;
+  }
+  let best=seed.map(c=>[c[0],c[1]]);
+  const attempts=10,seedLen=seed.length,want=Math.max(target,minAccept||0);
+  for(let a=0;a<attempts;a++){
+    const cells=seed.map(c=>[c[0],c[1]]);
+    let guard=0;
+    while(cells.length<target&&guard++<Math.max(50,target*12)){
+      const{last,run}=walkState(cells,dir);
+      const opts=growOptions(hx,hy,dir,cells,last,run);
+      if(!opts.length){
+        if(cells.length>=want&&Math.random()<.35)break;
+        if(cells.length>seedLen)cells.pop();else break;
+        continue;
+      }
+      const next=pickWeighted(opts);
+      cells.push([next.nx,next.ny]);
+      if(cells.length>best.length)best=cells.map(c=>[c[0],c[1]]);
+    }
+    if(cells.length>best.length)best=cells.map(c=>[c[0],c[1]]);
+    if(best.length>=target)break;
+  }
+  return best;
+}
+function targetLength(cfg,mode='primary'){
+  if(mode==='filler2')return 2;
+  if(mode==='filler3')return 3;
+  const lo=mode==='bridge'?Math.max(4,Math.floor(cfg.minLen*.55)):cfg.minLen;
+  const hi=mode==='bridge'?Math.max(lo+2,Math.min(cfg.maxLen,Math.floor(cfg.maxLen*.45))):cfg.maxLen;
+  const span=Math.max(0,hi-lo);
+  return lo+Math.floor(Math.pow(Math.random(),mode==='bridge'?.62:.48)*(span+1));
 }
 // Single-phase reverse-placement: every placed piece has a clear escape ray over the pieces already
 // down, so removing them in reverse order always solves. The candidate scorer below favors dense
 // boards with long snakes and rejects the old failure mode: a field of mostly two-cell arrows.
+function serpentinePath(){
+  const path=[],vertical=Math.random()<.5;
+  if(vertical){
+    for(let x=0;x<cols;x++){
+      if(x%2===0){for(let y=0;y<rows;y++)path.push([x,y]);}
+      else{for(let y=rows-1;y>=0;y--)path.push([x,y]);}
+    }
+  }else{
+    for(let y=0;y<rows;y++){
+      if(y%2===0){for(let x=0;x<cols;x++)path.push([x,y]);}
+      else{for(let x=cols-1;x>=0;x--)path.push([x,y]);}
+    }
+  }
+  if(Math.random()<.5)path.reverse();
+  return path;
+}
+function straightHead(cells){
+  if(cells.length<3)return true;
+  const a=cells[0],b=cells[1],c=cells[2];
+  return (a[0]-b[0])===(b[0]-c[0])&&(a[1]-b[1])===(b[1]-c[1]);
+}
+function straightStartAt(path,i){
+  if(path.length-i<3)return true;
+  return straightHead([path[i],path[i+1],path[i+2]]);
+}
 function attemptGenerate(){
   const cfg=DIFF[diff];cols=cfg.cols;rows=cfg.rows;
   occ=Array.from({length:rows},()=>Array(cols).fill(-1));pieces=[];
-  let id=0,placedAny=true;
-  while(placedAny){
-    placedAny=false;
-    const order=orderedCells();
-    for(const[hx,hy]of order){
-      if(occ[hy][hx]!==-1)continue;
-      const dirs=DK.filter(d=>rayClearGen(hx,hy,d));
-      if(!dirs.length)continue;
-      dirs.sort(()=>Math.random()-0.5);
-      for(const dir of dirs){
-        const target=targetLength(cfg);
-        const cells=growSnake(hx,hy,dir,target);
-        if(cells.length>=cfg.minLen){
-          for(const[x,y]of cells)occ[y][x]=id;
-          pieces.push({id,cells,dir,hx,hy,alive:true});id++;
-          placedAny=true;break;
-        }
-      }
+  const path=serpentinePath();
+  let at=0,id=0;
+  while(at<path.length){
+    const remaining=path.length-at;
+    let len;
+    if(remaining<=cfg.maxLen)len=remaining;
+    else{
+      const span=cfg.maxLen-cfg.minLen+1;
+      len=cfg.minLen+Math.floor(Math.random()*span);
+      len=Math.min(len,remaining-cfg.minLen);
     }
+    while(at+len<path.length){
+      const rest=path.length-(at+len);
+      if(rest>=cfg.minLen&&straightStartAt(path,at+len))break;
+      len++;
+      if(len>=remaining)break;
+    }
+    const cells=path.slice(at,at+len).map(c=>[c[0],c[1]]);
+    if(cells.length<cfg.minLen&&pieces.length){
+      const prev=pieces[pieces.length-1];
+      for(const c of cells){prev.cells.push(c);occ[c[1]][c[0]]=prev.id;}
+      normalizeGeneratedPiece(prev);
+      break;
+    }
+    const dir=dirBetween(cells[1],cells[0])||"right";
+    const[hx,hy]=cells[0];
+    for(const[x,y]of cells)occ[y][x]=id;
+    pieces.push({id,cells,dir,hx,hy,alive:true});at+=len;id++;
   }
   total=pieces.length;
 }
+function normalizeGeneratedPiece(p){
+  p.hx=p.cells[0][0];p.hy=p.cells[0][1];
+  if(p.cells.length>1)p.dir=dirBetween(p.cells[1],p.cells[0])||p.dir;
+}
 function boardScore(){
   const filled=occCount(),density=filled/(cols*rows);
+  const target=DIFF[diff].targetFill||.9;
   let len2=0,len3=0,longCells=0,sum=0,maxLen=0;
   for(const p of pieces){
     const L=p.cells.length;
@@ -249,7 +329,8 @@ function boardScore(){
     if(L>=8)longCells+=L;
   }
   const avg=sum/(pieces.length||1);
-  return density*1000+avg*22+maxLen*1.8+(longCells/(filled||1))*130-len2*220-len3*9;
+  const under=Math.max(0,target-density);
+  return density*1800-under*2600+avg*18+maxLen*1.4+(longCells/(filled||1))*120-len2*70-len3*10;
 }
 function cloneBoard(){
   return {
