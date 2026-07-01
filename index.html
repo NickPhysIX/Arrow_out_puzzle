@@ -99,6 +99,8 @@
       <button class="btn on" data-diff="easy">Easy</button>
       <button class="btn" data-diff="medium">Medium</button>
       <button class="btn" data-diff="hard">Hard</button>
+      <button class="btn" data-diff="veryHard">Very Hard</button>
+      <button class="btn" data-diff="extreme">Extreme</button>
     </div>
     <button class="btn" id="hintBtn">Show free</button>
     <button class="btn primary" id="newBtn">New level</button>
@@ -119,9 +121,11 @@ const DIRS={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]};
 const DK=Object.keys(DIRS);
 const OPP={up:"down",down:"up",left:"right",right:"left"};
 const DIFF={
-  easy:{cols:9,rows:11,minLen:2,maxLen:7,density:.68,label:"Easy"},
-  medium:{cols:12,rows:15,minLen:3,maxLen:8,density:.70,label:"Medium"},
-  hard:{cols:15,rows:19,minLen:3,maxLen:9,density:.72,label:"Hard"}
+  easy:{cols:10,rows:12,minLen:2,maxLen:7,label:"Easy"},
+  medium:{cols:13,rows:16,minLen:3,maxLen:8,label:"Medium"},
+  hard:{cols:16,rows:20,minLen:3,maxLen:9,label:"Hard"},
+  veryHard:{cols:20,rows:25,minLen:3,maxLen:10,label:"Very Hard"},
+  extreme:{cols:24,rows:30,minLen:3,maxLen:11,label:"Extreme"}
 };
 const MAX_STRIKES=3;
 const CELL=44;          // fixed board-space cell size; zoom is handled by the SVG viewBox
@@ -144,6 +148,13 @@ function rayClearGen(x,y,dir){const[dx,dy]=DIRS[dir];let cx=x+dx,cy=y+dy;
 function onRay(hx,hy,dir,x,y){const[dx,dy]=DIRS[dir];let cx=hx+dx,cy=hy+dy;
   while(inb(cx,cy)){if(cx===x&&cy===y)return true;cx+=dx;cy+=dy;}return false;}
 function occCount(){let n=0;for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)if(occ[y][x]!==-1)n++;return n;}
+function depthOf(x,y){return Math.min(x,y,cols-1-x,rows-1-y);}
+function orderedCells(){
+  const cells=[];
+  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)cells.push([x,y,depthOf(x,y)+Math.random()*.35]);
+  cells.sort((a,b)=>b[2]-a[2]);
+  return cells.map(([x,y])=>[x,y]);
+}
 function neighborScore(x,y,cells){
   let n=0;
   for(const d of DK){const[dx,dy]=DIRS[d],nx=x+dx,ny=y+dy;
@@ -188,35 +199,52 @@ function growCells(hx,hy,dir,target){
 function attemptGenerate(){
   const cfg=DIFF[diff];cols=cfg.cols;rows=cfg.rows;
   occ=Array.from({length:rows},()=>Array(cols).fill(-1));pieces=[];
-  const targetCells=Math.ceil(cols*rows*cfg.density);
-  let id=0,tries=0;
-  while(occCount()<targetCells&&tries<cols*rows*240){
-    tries++;
-    const empties=[];for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)if(occ[y][x]===-1)empties.push([x,y]);
-    if(!empties.length)break;
-    const[hx,hy]=empties[(Math.random()*empties.length)|0];
+  const order=orderedCells();
+  let id=0;
+  for(const[hx,hy]of order){
     let dirs=DK.filter(d=>rayClearGen(hx,hy,d));
     if(!dirs.length)continue;
-    dirs=dirs.filter(d=>{const bx=hx-DIRS[d][0],by=hy-DIRS[d][1];return inb(bx,by)&&occ[by][bx]===-1;});
-    if(!dirs.length)continue;
+    dirs.sort((a,b)=>{
+      const[adx,ady]=DIRS[a], [bdx,bdy]=DIRS[b];
+      const da=depthOf(hx+adx,hy+ady), db=depthOf(hx+bdx,hy+bdy);
+      return da-db+Math.random()*.5-.25;
+    });
     const dir=dirs[(Math.random()*dirs.length)|0];
-    const targ=cfg.minLen+((Math.random()*(cfg.maxLen-cfg.minLen+1))|0);
-    const cells=growCells(hx,hy,dir,targ);
-    if(cells.length<cfg.minLen)continue;
-    for(const[x,y]of cells)occ[y][x]=id;
-    pieces.push({id,cells,dir,hx,hy,alive:true});id++;
+    occ[hy][hx]=id;
+    pieces.push({id,cells:[[hx,hy]],dir,hx,hy,alive:true,rank:id});id++;
   }
+
+  const live=new Map(pieces.map(p=>[p.id,p]));
+  const ids=[...live.keys()].sort((a,b)=>b-a);
+  for(const pid of ids){
+    const p=live.get(pid);
+    if(!p)continue;
+    const target=cfg.minLen+((Math.random()*(cfg.maxLen-cfg.minLen+1))|0);
+    while(p.cells.length<target){
+      const[tx,ty]=p.cells[p.cells.length-1];
+      const opts=[];
+      for(const nd of DK){
+        const[dx,dy]=DIRS[nd],nx=tx+dx,ny=ty+dy;
+        if(!inb(nx,ny))continue;
+        const oid=occ[ny][nx],op=live.get(oid);
+        if(!op||oid>=p.id||op.cells.length!==1)continue;
+        if(onRay(p.hx,p.hy,p.dir,nx,ny))continue;
+        const turn=p.cells.length<2?1:(nd===OPP[p.dir]?1.2:2.1);
+        opts.push({nx,ny,oid,w:(1+depthOf(nx,ny)*.25)*turn});
+      }
+      if(!opts.length)break;
+      const next=pickWeighted(opts);
+      live.delete(next.oid);
+      occ[next.ny][next.nx]=p.id;
+      p.cells.push([next.nx,next.ny]);
+    }
+  }
+  pieces=[...live.values()].sort((a,b)=>a.id-b.id);
   total=pieces.length;
   return {filled:occCount(),pieces:pieces.length,occ,piecesList:pieces};
 }
 function generate(){
-  let best=null;
-  for(let i=0;i<36;i++){
-    const cand=attemptGenerate();
-    if(!best||cand.filled>best.filled)best={filled:cand.filled,pieces:cand.pieces,occ:occ.map(r=>[...r]),piecesList:pieces.map(p=>({...p,cells:p.cells.map(c=>[...c])}))};
-    if(cand.filled>=Math.ceil(cols*rows*DIFF[diff].density))break;
-  }
-  occ=best.occ;pieces=best.piecesList;total=pieces.length;
+  attemptGenerate();
 }
 /* piece is free iff head's forward ray clear of OTHER live pieces; returns gap (empty cells ahead) */
 function freeInfo(p){const[dx,dy]=DIRS[p.dir];let cx=p.hx+dx,cy=p.hy+dy,gap=0;
@@ -398,7 +426,8 @@ function overlay(kind,title,stars,text){document.getElementById('ovTitle').textC
 function newLevel(){
   document.getElementById('overlay').classList.remove('show');animating=false;
   document.getElementById('diffLabel').textContent=DIFF[diff].label;
-  do{generate();}while(total<8);
+  let genTries=0;
+  do{generate();genTries++;}while(genTries<8&&(total<8||occCount()<cols*rows));
   freed=0;strikes=0;startT=0;running=true;
   document.getElementById('time').textContent='0:00';
   drawDrops();updateHUD();showBest();
