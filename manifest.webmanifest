@@ -1,0 +1,16 @@
+{
+  "name": "Arrow Out",
+  "short_name": "Arrow Out",
+  "description": "A slither puzzle — tap arrows to free them and untangle the whole board.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4ecdd",
+  "theme_color": "#f4ecdd",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
