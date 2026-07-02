@@ -51,6 +51,11 @@
     font-size:22px;font-weight:900;line-height:1;cursor:pointer;box-shadow:0 3px 0 var(--shadow);
     display:flex;align-items:center;justify-content:center;touch-action:manipulation}
   .zbtn:active{transform:translateY(2px);box-shadow:0 1px 0 var(--shadow)}
+  .busy{position:absolute;inset:0;display:none;flex-direction:column;gap:12px;align-items:center;justify-content:center;
+    background:rgba(255,255,255,.75);backdrop-filter:blur(2px);z-index:6;font-weight:800;color:#8a6a45}
+  .busy.show{display:flex}
+  .spin{width:28px;height:28px;border-radius:50%;border:4px solid #e5d5bd;border-top-color:#8a6a45;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
   .zhint{position:absolute;left:12px;bottom:8px;font-size:12px;font-weight:800;color:#b3b3b3;z-index:5;pointer-events:none;
     transition:opacity .5s ease}
   .controls{width:100%;max-width:720px;display:grid;gap:10px;padding:8px 20px calc(16px + env(safe-area-inset-bottom))}
@@ -93,7 +98,8 @@
   </div>
   <div class="stage">
     <svg id="board" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"></svg>
-    <div class="zhint" id="zhint">pinch or drag to zoom</div>
+    <div class="zhint" id="zhint">pinch to zoom · drag to pan</div>
+    <div class="busy" id="busy"><div class="spin"></div>Building board…</div>
   </div>
   <div class="controls">
     <div class="controlRow">
@@ -122,62 +128,26 @@
     <div class="row"><button class="btn" id="ovRetry">Try again</button><button class="btn primary" id="ovNext">New level</button></div>
   </div></div>
 
-<script>
-"use strict";
-const SVGNS="http://www.w3.org/2000/svg";
-const store=(()=>{let ok=false;try{const k='__t';localStorage.setItem(k,'1');localStorage.removeItem(k);ok=true;}catch(e){}const mem={};
-  return{get:k=>{try{return ok?localStorage.getItem(k):(mem[k]??null);}catch(e){return mem[k]??null;}},
-         set:(k,v)=>{try{ok?localStorage.setItem(k,v):(mem[k]=v);}catch(e){mem[k]=v;}},
-         remove:k=>{try{ok?localStorage.removeItem(k):delete mem[k];}catch(e){delete mem[k];}}};})();
-
-const DIRS={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]};
-const DK=Object.keys(DIRS);
-const OPP={up:"down",down:"up",left:"right",right:"left"};
-const DIFF={
-  easy:{cols:10,rows:12,minLen:4,maxLen:12,targetFill:.84,candidates:5,label:"Easy"},
-  medium:{cols:13,rows:16,minLen:5,maxLen:18,targetFill:.88,candidates:6,label:"Medium"},
-  hard:{cols:16,rows:21,minLen:6,maxLen:30,targetFill:.90,candidates:7,label:"Hard"},
-  veryHard:{cols:20,rows:27,minLen:7,maxLen:42,targetFill:.91,candidates:7,label:"Very Hard"},
-  extreme:{cols:24,rows:32,minLen:8,maxLen:55,targetFill:.92,candidates:7,label:"Extreme"}
-};
-const SAVE_KEY='arrowout_saved_game_v4';
-const MAX_STRIKES=3;
-const CELL=44;          // fixed board-space cell size; zoom is handled by the SVG viewBox
-// arrow look — tweak freely
-const STROKE_F=0.185;   // shaft thickness as fraction of a cell
-const HEAD_LEN=1.75;    // arrowhead length in stroke-widths
-const HEAD_HW =1.25;    // arrowhead half-width in stroke-widths
-const STUB    =0.55;    // shaft length for a single-cell arrow, in cells
-
-let cols,rows,cell=CELL,strokeW,pieces,occ,elmap,pieceById,diff='easy';
-let freed,total,strikes,running=false,animating=false,startT=0,elapsedBase=0,timerId=null;
-let BW=0,BH=0,vb={x:0,y:0,w:0,h:0},fitW=0,minW=0,userZoomed=false;   // view state
-const board=document.getElementById('board');
-const stage=document.querySelector('.stage');
-const inb=(x,y)=>x>=0&&x<cols&&y>=0&&y<rows;
-
+<script type="text/plain" id="genSrc">
 /* ---------- generation (reverse construction -> always solvable) ----------
-   v17: near-100% fill with organic snaking paths.
-   A. removed the self-ray ban (a piece's own body never blocks its own head at runtime)
-   B. wall-hugging growth weight -> serpentine packing instead of open-space wandering
-   C. per-segment run targets (incl. rare full-length corridors) -> longer straights
-   D. connectivity guard: a placement may never strand an empty region without a ray-clear cell
-   E. pocket-repair pass fills remaining gaps; tail-absorb pass dissolves leftovers/singletons,
-      each absorb validated by a full solvability simulation. */
-const ckey=(x,y)=>x+','+y;
-function rayClearGen(x,y,dir,extra){const[dx,dy]=DIRS[dir];let cx=x+dx,cy=y+dy;
-  while(inb(cx,cy)){if(occ[cy][cx]!==-1||(extra&&extra.has(ckey(cx,cy))))return false;cx+=dx;cy+=dy;}return true;}
-function anyRayClear(x,y,extra){return DK.some(d=>rayClearGen(x,y,d,extra));}
-function occCount(){let n=0;for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)if(occ[y][x]!==-1)n++;return n;}
+   v18: doubled board sizes; tiered long-first packing.
+   Long snakes are placed first while the board is open (they need the room),
+   then successively shorter tiers densify the gaps, stopping in the 90-95% window.
+   Hot paths use flat typed arrays (extreme is now 48x64 = 3072 cells). */
+function rayClearGen(x,y,dir,mask){const[dx,dy]=DIRS[dir];let cx=x+dx,cy=y+dy;
+  while(inb(cx,cy)){if(occ[cy][cx]!==-1||(mask&&mask[cy*cols+cx]))return false;cx+=dx;cy+=dy;}return true;}
+function anyRayClear(x,y,mask){return DK.some(d=>rayClearGen(x,y,d,mask));}
+let genFilled=0;
 function depthOf(x,y){return Math.min(x,y,cols-1-x,rows-1-y);}
 function orderedCells(){
   const cells=[];
-  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)cells.push([x,y,depthOf(x,y)+Math.random()*.35]);
+  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)if(occ[y][x]===-1)cells.push([x,y,depthOf(x,y)+Math.random()*.35]);
   cells.sort((a,b)=>b[2]-a[2]);
-  return cells.map(([x,y])=>[x,y]);
+  return cells;
 }
 function pickWeighted(opts){
-  let sum=opts.reduce((a,o)=>a+o.w,0),r=Math.random()*sum;
+  let sum=0;for(const o of opts)sum+=o.w;
+  let r=Math.random()*sum;
   for(const o of opts){r-=o.w;if(r<=0)return o;}
   return opts[opts.length-1];
 }
@@ -185,157 +155,177 @@ function dirBetween(a,b){
   const dx=b[0]-a[0],dy=b[1]-a[1];
   return DK.find(d=>DIRS[d][0]===dx&&DIRS[d][1]===dy)||null;
 }
-function walkState(cells,headDir){
-  if(cells.length<2)return{last:OPP[headDir],run:1};
-  let last=dirBetween(cells[cells.length-2],cells[cells.length-1])||OPP[headDir],run=1;
-  for(let i=cells.length-2;i>0;i--){
-    const d=dirBetween(cells[i-1],cells[i]);
-    if(d===last)run++;else break;
-  }
-  return{last,run};
-}
 function sampleRunTarget(){
   const r=Math.random();
-  if(r<.34)return 2;
-  if(r<.60)return 3;
-  if(r<.78)return 4;
-  if(r<.88)return 5+Math.floor(Math.random()*2);
-  if(r<.96)return 7+Math.floor(Math.random()*4);
+  if(r<.30)return 2;
+  if(r<.55)return 3;
+  if(r<.72)return 4;
+  if(r<.84)return 5+Math.floor(Math.random()*2);
+  if(r<.94)return 7+Math.floor(Math.random()*5);
   return Math.max(cols,rows);           // rare full-length corridor
 }
-function wallNeighbors(x,y,used){
+function wallNeighbors(x,y,mask){
   let n=0;
-  for(const d of DK){const[dx,dy]=DIRS[d],nx=x+dx,ny=y+dy;
-    if(!inb(nx,ny)||occ[ny][nx]!==-1||used.has(ckey(nx,ny)))n++;}
+  for(const d of DK){const nx=x+DIRS[d][0],ny=y+DIRS[d][1];
+    if(!inb(nx,ny)||occ[ny][nx]!==-1||mask[ny*cols+nx])n++;}
   return n;
 }
-function growOptions(cells,last,run,runTarget,used,region){
-  const[cx,cy]=cells[cells.length-1],opts=[];
-  for(const nd of DK){
-    if(nd===OPP[last])continue;
-    const[dx,dy]=DIRS[nd],nx=cx+dx,ny=cy+dy,k=ckey(nx,ny);
-    if(!inb(nx,ny)||occ[ny][nx]!==-1||used.has(k))continue;
-    if(region&&!region.has(k))continue;
-    const straight=nd===last;
-    let rhythm;
-    if(straight) rhythm=run<runTarget?8.0:.25;
-    else rhythm=run<runTarget?.3:8.0;
-    const hug=1+wallNeighbors(nx,ny,used)*.9;
-    opts.push({nx,ny,nd,w:rhythm*hug});
+function placeableHead(x,y,mask){
+  // a future piece can start here: some dir has a clear escape ray AND the
+  // in-line back cell (needed for the straight-behind-head rule) is free
+  for(const d of DK){
+    if(!rayClearGen(x,y,d,mask))continue;
+    const bx=x-DIRS[d][0],by=y-DIRS[d][1];
+    if(inb(bx,by)&&occ[by][bx]===-1&&!mask[by*cols+bx])return true;
   }
-  return opts;
+  return false;
 }
-function componentsOK(snake,minComp){
-  const extra=new Set(snake.map(c=>ckey(c[0],c[1])));
-  const seen=new Set();
-  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
-    const k=ckey(x,y);
-    if(occ[y][x]!==-1||extra.has(k)||seen.has(k))continue;
-    const stack=[[x,y]];const comp=[];seen.add(k);let border=false;
+function componentsOK(mask,minComp){
+  // every empty region left after this placement must stay fillable:
+  // a 1-cell region needs a clear ray (stub arrow), bigger ones a placeable head
+  const N=cols*rows,seen=new Uint8Array(N),stack=[];
+  for(let i=0;i<N;i++){
+    if(seen[i]||mask[i])continue;
+    const y0=(i/cols)|0,x0=i%cols;
+    if(occ[y0][x0]!==-1)continue;
+    stack.length=0;stack.push(i);seen[i]=1;
+    const comp=[];
     while(stack.length){
-      const[ax,ay]=stack.pop();comp.push([ax,ay]);
-      if(ax===0||ay===0||ax===cols-1||ay===rows-1)border=true;
-      for(const d of DK){const nx=ax+DIRS[d][0],ny=ay+DIRS[d][1],nk=ckey(nx,ny);
-        if(inb(nx,ny)&&occ[ny][nx]===-1&&!extra.has(nk)&&!seen.has(nk)){seen.add(nk);stack.push([nx,ny]);}}
+      const j=stack.pop();comp.push(j);
+      const ay=(j/cols)|0,ax=j%cols;
+      for(const d of DK){
+        const nx=ax+DIRS[d][0],ny=ay+DIRS[d][1];
+        if(nx<0||ny<0||nx>=cols||ny>=rows)continue;
+        const k=ny*cols+nx;
+        if(!seen[k]&&!mask[k]&&occ[ny][nx]===-1){seen[k]=1;stack.push(k);}
+      }
     }
     if(comp.length<(minComp||1))return false;
-    if(!border&&!comp.some(([ax,ay])=>anyRayClear(ax,ay,extra)))return false;
+    if(comp.length===1){
+      if(!anyRayClear(comp[0]%cols,(comp[0]/cols)|0,mask))return false;
+    }else if(!comp.some(j=>placeableHead(j%cols,(j/cols)|0,mask)))return false;
   }
   return true;
 }
 function growSnake(hx,hy,dir,target,minAccept,region){
-  // the cell directly behind the head must be part of the snake, in line with dir:
-  // guarantees >=1 straight body length behind the arrowhead before any elbow.
+  // the cell directly behind the head is mandatory and in line with dir:
+  // >=1 straight body length behind the arrowhead before any elbow.
   const bx=hx-DIRS[dir][0],by=hy-DIRS[dir][1];
-  const inRegion=(x,y)=>!region||region.has(ckey(x,y));
+  const inRegion=(x,y)=>!region||region.has(y*cols+x);
   if(!(inb(bx,by)&&occ[by][bx]===-1&&inRegion(bx,by)))return null;
-  const seed=[[hx,hy],[bx,by]];
+  // onion rule: bodies may not dip more than 1 layer shallower than the head.
+  // Filling deepest-first keeps all shallower layers empty, so every future
+  // outward escape ray stays clear by construction. (Repair mode is exempt.)
+  const minDepth=region?0:Math.max(0,depthOf(hx,hy)-1);
+  const N=cols*rows,minA=minAccept||2;
+  const attempts=target>=60?3:target>=30?5:10;
   let best=null;
-  const attempts=12,seedLen=seed.length,minA=minAccept||2;
   for(let a=0;a<attempts;a++){
-    const cells=seed.map(c=>[c[0],c[1]]);
-    const used=new Set(cells.map(c=>ckey(c[0],c[1])));
-    let runTarget=sampleRunTarget();
+    const cells=[[hx,hy],[bx,by]];
+    const mask=new Uint8Array(N);mask[hy*cols+hx]=1;mask[by*cols+bx]=1;
+    let last=OPP[dir],run=1,runTarget=sampleRunTarget();
     let guard=0;
-    while(cells.length<target&&guard++<Math.max(60,target*14)){
-      const{last,run}=walkState(cells,dir);
-      const opts=growOptions(cells,last,run,runTarget,used,region);
+    while(cells.length<target&&guard++<Math.max(60,target*10)){
+      const[cx,cy]=cells[cells.length-1],opts=[];
+      for(const nd of DK){
+        if(nd===OPP[last])continue;
+        const nx=cx+DIRS[nd][0],ny=cy+DIRS[nd][1];
+        if(!inb(nx,ny)||occ[ny][nx]!==-1||mask[ny*cols+nx])continue;
+        if(region&&!region.has(ny*cols+nx))continue;
+        if(depthOf(nx,ny)<minDepth)continue;
+        let rhythm;
+        if(nd===last) rhythm=run<runTarget?8.0:.25;
+        else rhythm=run<runTarget?.3:8.0;
+        // depth bias: pack the board center-out so remaining empty space stays
+        // shallow with short outward escape rays (critical on doubled boards)
+        const compact=1+depthOf(nx,ny)*.08;
+        opts.push({nx,ny,nd,w:rhythm*(1+wallNeighbors(nx,ny,mask)*.9)*compact});
+      }
       if(!opts.length){
-        if(cells.length>seedLen){const c=cells.pop();used.delete(ckey(c[0],c[1]));runTarget=sampleRunTarget();}
+        if(cells.length>2){const c=cells.pop();mask[c[1]*cols+c[0]]=0;
+          last=cells.length>1?dirBetween(cells[cells.length-2],cells[cells.length-1]):OPP[dir];
+          run=1;runTarget=sampleRunTarget();}
         else break;
         continue;
       }
       const next=pickWeighted(opts);
-      const{last:pl}=walkState(cells,dir);
-      if(next.nd!==pl)runTarget=sampleRunTarget();
-      cells.push([next.nx,next.ny]);used.add(ckey(next.nx,next.ny));
+      if(next.nd===last)run++;else{run=1;runTarget=sampleRunTarget();}
+      last=next.nd;
+      cells.push([next.nx,next.ny]);mask[next.ny*cols+next.nx]=1;
     }
     if(cells.length>=minA){
+      // lazy connectivity guard with a capped tail-trim retry
       let cand=cells;
-      while(cand.length>=minA){
-        if(componentsOK(cand,region?1:3)){best=cand.map(c=>[c[0],c[1]]);break;}
+      for(let t=0;t<4&&cand.length>=minA;t++){
+        if(componentsOK(mask,region?1:3)){best=cand.map(c=>[c[0],c[1]]);break;}
+        const c=cand[cand.length-1];mask[c[1]*cols+c[0]]=0;
         cand=cand.slice(0,cand.length-1);
       }
-      if(best&&best.length>=Math.min(target,cells.length))break;
+      if(best)break;
     }
   }
   return best;
 }
-function targetLength(cfg,mode){
-  const lo=mode==='bridge'?Math.max(3,Math.floor(cfg.minLen*.55)):cfg.minLen;
-  const hi=mode==='bridge'?Math.max(lo+2,Math.floor(cfg.maxLen*.5)):cfg.maxLen;
-  const span=Math.max(0,hi-lo);
-  return lo+Math.floor(Math.pow(Math.random(),.48)*(span+1));
-}
 let genNextId=0;
 function placeGen(cells,dir,hx,hy){
   for(const[x,y]of cells)occ[y][x]=genNextId;
+  genFilled+=cells.length;
   pieces.push({id:genNextId,cells,dir,hx,hy,alive:true});genNextId++;
 }
-function placePass(cfg,minLen,mode){
+function placePass(tier,goal){
   let placedAny=false;
+  const N=cols*rows;
   for(const[hx,hy]of orderedCells()){
+    if(genFilled/N>=goal)break;
     if(occ[hy][hx]!==-1)continue;
     const dirs=DK.filter(d=>rayClearGen(hx,hy,d));
     if(!dirs.length)continue;
     dirs.sort(()=>Math.random()-0.5);
     for(const dir of dirs){
-      const cells=growSnake(hx,hy,dir,targetLength(cfg,mode),minLen);
+      const target=tier.lo+Math.floor(Math.pow(Math.random(),.5)*(tier.hi-tier.lo+1));
+      const cells=growSnake(hx,hy,dir,target,tier.min);
       if(cells){placeGen(cells,dir,hx,hy);placedAny=true;break;}
     }
   }
   return placedAny;
 }
 function emptyComponents(){
-  const seen=new Set(),comps=[];
-  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
-    const k=ckey(x,y);
-    if(occ[y][x]!==-1||seen.has(k))continue;
-    const stack=[[x,y]];const comp=[];seen.add(k);
+  const N=cols*rows,seen=new Uint8Array(N),comps=[];
+  for(let i=0;i<N;i++){
+    if(seen[i])continue;
+    const y0=(i/cols)|0,x0=i%cols;
+    if(occ[y0][x0]!==-1)continue;
+    const stack=[i];seen[i]=1;const comp=[];
     while(stack.length){
-      const[ax,ay]=stack.pop();comp.push([ax,ay]);
-      for(const d of DK){const nx=ax+DIRS[d][0],ny=ay+DIRS[d][1],nk=ckey(nx,ny);
-        if(inb(nx,ny)&&occ[ny][nx]===-1&&!seen.has(nk)){seen.add(nk);stack.push([nx,ny]);}}
+      const j=stack.pop();comp.push([j%cols,(j/cols)|0]);
+      const ay=(j/cols)|0,ax=j%cols;
+      for(const d of DK){
+        const nx=ax+DIRS[d][0],ny=ay+DIRS[d][1];
+        if(nx<0||ny<0||nx>=cols||ny>=rows)continue;
+        const k=ny*cols+nx;
+        if(!seen[k]&&occ[ny][nx]===-1){seen[k]=1;stack.push(k);}
+      }
     }
     comps.push(comp);
   }
   return comps;
 }
-function repairPass(){
+function repairPass(stopAt){
   let guard=0;
   while(guard++<200){
+    if(genFilled/(cols*rows)>=stopAt)return;
     const comps=emptyComponents();
     if(!comps.length)return;
     let progress=false;
     for(const comp of comps){
-      const region=new Set(comp.map(c=>ckey(c[0],c[1])));
+      const region=new Set(comp.map(([x,y])=>y*cols+x));
       const heads=comp.filter(([x,y])=>DK.some(d=>rayClearGen(x,y,d))).sort(()=>Math.random()-.5);
       let done=false;
       for(const[hx,hy]of heads){
         if(occ[hy][hx]!==-1)continue;
         const dirs=DK.filter(d=>rayClearGen(hx,hy,d)).sort(()=>Math.random()-.5);
         for(const dir of dirs){
-          const cells=growSnake(hx,hy,dir,comp.length,2,region);
+          const cells=growSnake(hx,hy,dir,Math.min(comp.length,Math.round(DIFF[diff].maxLen*1.5)),2,region);
           if(cells){placeGen(cells,dir,hx,hy);progress=true;done=true;break;}
         }
         if(done)break;
@@ -344,7 +334,10 @@ function repairPass(){
         for(const[x,y]of comp){
           if(occ[y][x]!==-1)continue;
           const d=DK.find(dd=>rayClearGen(x,y,dd));
-          if(d){placeGen([[x,y]],d,x,y);progress=true;}
+          if(!d)continue;
+          const m=new Uint8Array(cols*rows);m[y*cols+x]=1;
+          if(!componentsOK(m,1))continue;   // a stub must not kill another region's last head
+          placeGen([[x,y]],d,x,y);progress=true;
         }
       }
     }
@@ -366,25 +359,29 @@ function solvableNow(){
   }
   return alive.size===0;
 }
-function tryAbsorb(x,y){
+function tryAbsorb(x,y,strict){
   for(const d of DK){
     const nx=x+DIRS[d][0],ny=y+DIRS[d][1];
     if(!inb(nx,ny))continue;
     const id=occ[ny][nx];if(id===-1)continue;
     const p=pieces.find(q=>q.id===id);
+    if(p.cells.length>=Math.round(DIFF[diff].maxLen*1.15))continue;  // no monster pieces
     const[tx,ty]=p.cells[p.cells.length-1];
     if(tx!==nx||ty!==ny)continue;               // must attach at the tail
-    // for a 1-cell piece the tail IS the head: only allow the straight-behind cell,
-    // so the arrowhead always has >=1 straight body length before an elbow
+    // for a 1-cell piece the tail IS the head: only allow the straight-behind cell
     if(p.cells.length===1&&(x!==p.hx-DIRS[p.dir][0]||y!==p.hy-DIRS[p.dir][1]))continue;
+    if(strict){
+      // absorbing this cell must not strand any remaining empty region
+      const m=new Uint8Array(cols*rows);m[y*cols+x]=1;
+      if(!componentsOK(m,1))continue;
+    }
     p.cells.push([x,y]);occ[y][x]=id;
-    if(solvableNow())return true;
+    if(solvableNow()){genFilled++;return true;}
     p.cells.pop();occ[y][x]=-1;
   }
   return false;
 }
 function mergeSingles(){
-  // two adjacent 1-cell arrows can become one straight 2-cell arrow (head+inline tail)
   let changed=true;
   while(changed){
     changed=false;
@@ -398,7 +395,6 @@ function mergeSingles(){
         const bId=occ[by][bx];if(bId===-1)continue;
         const b=pieces.find(q=>q.id===bId);
         if(!b||b.cells.length!==1||b===a)continue;
-        // try: head=a pointing away from b (b straight behind), then the reverse
         for(const[head,tail]of[[a,b],[b,a]]){
           const[hx2,hy2]=head.cells[0],[tx2,ty2]=tail.cells[0];
           const nd=dirBetween([tx2,ty2],[hx2,hy2]);
@@ -417,36 +413,49 @@ function mergeSingles(){
   }
   total=pieces.length;
 }
-function absorbPass(){
+function absorbPass(strict){
   let changed=true;
   while(changed){
     changed=false;
     for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)
-      if(occ[y][x]===-1&&tryAbsorb(x,y))changed=true;
+      if(occ[y][x]===-1&&tryAbsorb(x,y,strict))changed=true;
   }
   for(const p of pieces.slice()){
     if(p.cells.length!==1)continue;
     const[x,y]=p.cells[0];
-    occ[y][x]=-1;pieces.splice(pieces.indexOf(p),1);
-    if(!tryAbsorb(x,y)){pieces.push(p);occ[y][x]=p.id;}
+    occ[y][x]=-1;pieces.splice(pieces.indexOf(p),1);genFilled--;
+    if(!tryAbsorb(x,y,strict)){pieces.push(p);occ[y][x]=p.id;genFilled++;}
   }
   total=pieces.length;
 }
 function attemptGenerate(){
   const cfg=DIFF[diff];cols=cfg.cols;rows=cfg.rows;
-  occ=Array.from({length:rows},()=>Array(cols).fill(-1));pieces=[];genNextId=0;
-  const density=()=>occCount()/(cols*rows);
-  let guard=0;
-  while(density()<.86&&guard++<cols*rows&&placePass(cfg,cfg.minLen,'primary')){}
-  while(density()<.97&&placePass(cfg,Math.max(3,Math.floor(cfg.minLen*.6)),'bridge')){}
+  occ=Array.from({length:rows},()=>Array(cols).fill(-1));pieces=[];genNextId=0;genFilled=0;
+  const N=cols*rows,GOAL=.95;
+  // long snakes first, then shorter tiers densify the gaps
+  const tiers=[
+    {min:Math.max(cfg.minLen,Math.round(cfg.maxLen*.45)),lo:Math.round(cfg.maxLen*.55),hi:cfg.maxLen,sweeps:3},
+    {min:cfg.minLen,lo:cfg.minLen,hi:Math.round(cfg.maxLen*.45),sweeps:6},
+    {min:4,lo:4,hi:Math.max(7,cfg.minLen+2),sweeps:4},
+    {min:3,lo:3,hi:5,sweeps:3},
+    {min:2,lo:2,hi:3,sweeps:2}
+  ];
+  for(let round=0;round<3&&genFilled/N<.90;round++){
+    for(const t of tiers){
+      let s=0;
+      while(genFilled/N<GOAL&&s++<t.sweeps&&placePass(t,GOAL)){}
+      if(genFilled/N>=GOAL)break;
+    }
+    if(genFilled/N<.92)repairPass(.95);  // repair opens space for the next round
+  }
   total=pieces.length;
 }
 function boardScore(){
-  const filled=occCount(),density=filled/(cols*rows);
+  const filled=genFilled,density=filled/(cols*rows);
   let len1=0,len2=0,longCells=0,sum=0,maxLen=0;
   for(const p of pieces){
     const L=p.cells.length;sum+=L;maxLen=Math.max(maxLen,L);
-    if(L===1)len1++;if(L===2)len2++;if(L>=8)longCells+=L;
+    if(L===1)len1++;if(L===2)len2++;if(L>=10)longCells+=L;
   }
   const avg=sum/(pieces.length||1);
   return density*3000+avg*18+maxLen*1.4+(longCells/(filled||1))*120-len1*120-len2*40;
@@ -463,19 +472,66 @@ function restoreBoard(b){
   pieces=b.pieces.map(p=>({id:p.id,cells:p.cells.map(c=>[c[0],c[1]]),dir:p.dir,hx:p.hx,hy:p.hy,alive:true}));
   occ=b.occ.map(r=>r.slice());
   genNextId=pieces.reduce((m,p)=>Math.max(m,p.id),-1)+1;
+  genFilled=pieces.reduce((s,p)=>s+p.cells.length,0);
+}
+function buildOnce(){
+  attemptGenerate();
+  absorbPass(true);     // strict: never strand a region repair could still fill
+  repairPass(.96);
+  absorbPass(false);    // final sweep: eat whatever repair couldn't reach
+  mergeSingles();
+  return genFilled/(cols*rows);
 }
 function generate(){
-  let best=null,bestScore=-Infinity;
-  for(let i=0;i<3;i++){                 // 3 candidates: each attempt is far stronger than v16's
-    attemptGenerate();
-    const score=boardScore();
-    if(score>bestScore){bestScore=score;best=cloneBoard();}
+  // some seeds start badly; retry the full pipeline until a board clears the
+  // 90% floor, keeping the best attempt as fallback
+  const N=DIFF[diff].cols*DIFF[diff].rows;
+  const maxTries=N>2500?2:N>1200?3:2;
+  const floor=N>2500?.88:.90;           // the biggest board trades a little fill for time
+  let best=null,bestFill=0;
+  for(let i=0;i<maxTries;i++){
+    const fill=buildOnce();
+    if(fill>bestFill){bestFill=fill;best=cloneBoard();}
+    if(fill>=floor)break;
   }
   restoreBoard(best);
-  repairPass();
-  absorbPass();
-  mergeSingles();
 }
+function occCount(){return genFilled;}
+</script>
+<script>
+"use strict";
+const SVGNS="http://www.w3.org/2000/svg";
+const store=(()=>{let ok=false;try{const k='__t';localStorage.setItem(k,'1');localStorage.removeItem(k);ok=true;}catch(e){}const mem={};
+  return{get:k=>{try{return ok?localStorage.getItem(k):(mem[k]??null);}catch(e){return mem[k]??null;}},
+         set:(k,v)=>{try{ok?localStorage.setItem(k,v):(mem[k]=v);}catch(e){mem[k]=v;}},
+         remove:k=>{try{ok?localStorage.removeItem(k):delete mem[k];}catch(e){delete mem[k];}}};})();
+
+const DIRS={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]};
+const DK=Object.keys(DIRS);
+const OPP={up:"down",down:"up",left:"right",right:"left"};
+const DIFF={
+  easy:{cols:20,rows:24,minLen:5,maxLen:26,label:"Easy"},
+  medium:{cols:26,rows:32,minLen:6,maxLen:38,label:"Medium"},
+  hard:{cols:32,rows:42,minLen:7,maxLen:60,label:"Hard"},
+  veryHard:{cols:40,rows:54,minLen:8,maxLen:86,label:"Very Hard"},
+  extreme:{cols:48,rows:64,minLen:9,maxLen:110,label:"Extreme"}
+};
+const SAVE_KEY='arrowout_saved_game_v5';
+const MAX_STRIKES=3;
+const CELL=44;          // fixed board-space cell size; zoom is handled by the SVG viewBox
+// arrow look — tweak freely
+const STROKE_F=0.185;   // shaft thickness as fraction of a cell
+const HEAD_LEN=1.75;    // arrowhead length in stroke-widths
+const HEAD_HW =1.25;    // arrowhead half-width in stroke-widths
+const STUB    =0.55;    // shaft length for a single-cell arrow, in cells
+
+let cols,rows,cell=CELL,strokeW,pieces,occ,elmap,pieceById,diff='easy';
+let freed,total,strikes,running=false,animating=false,startT=0,elapsedBase=0,timerId=null;
+let BW=0,BH=0,vb={x:0,y:0,w:0,h:0},fitW=0,minW=0,userZoomed=false;   // view state
+const board=document.getElementById('board');
+const stage=document.querySelector('.stage');
+const inb=(x,y)=>x>=0&&x<cols&&y>=0&&y<rows;
+
 /* piece is free iff head's forward ray clear of OTHER live pieces; returns gap (empty cells ahead) */
 function freeInfo(p){const[dx,dy]=DIRS[p.dir];let cx=p.hx+dx,cy=p.hy+dy,gap=0;
   while(inb(cx,cy)){const o=occ[cy][cx];if(o!==-1&&o!==p.id)return{free:false,gap};gap++;cx+=dx;cy+=dy;}
@@ -567,15 +623,24 @@ function handleTap(sx,sy){
   const el=document.elementFromPoint(sx,sy);const id=el&&el.dataset?el.dataset.id:null;
   if(id!=null&&pieceById.has(+id))onClick(pieceById.get(+id));
 }
-board.addEventListener('pointerdown',e=>{
-  board.setPointerCapture(e.pointerId);gp.set(e.pointerId,{x:e.clientX,y:e.clientY});
+/* Gestures are bound to the plain .stage div, not the SVG: SVG pointer capture is
+   unreliable on iOS Safari (implicit touch capture goes to the child path under the
+   finger), which silently killed one-finger panning. On a div, capture just works. */
+stage.addEventListener('pointerdown',e=>{
+  try{stage.setPointerCapture(e.pointerId);}catch(_){}
+  gp.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(gp.size===1){grab={x:bX(e.clientX),y:bY(e.clientY)};tap={x:e.clientX,y:e.clientY,t:performance.now(),moved:false};pinch=null;}
-  else if(gp.size===2){const[a,b]=[...gp.values()];pinch={d:dist(a,b)};tap=null;hideHint();}
+  else if(gp.size===2){const[a,b]=[...gp.values()];
+    pinch={d:dist(a,b),mx:(a.x+b.x)/2,my:(a.y+b.y)/2};tap=null;grab=null;hideHint();}
 });
-board.addEventListener('pointermove',e=>{
+stage.addEventListener('pointermove',e=>{
   if(!gp.has(e.pointerId))return;gp.set(e.pointerId,{x:e.clientX,y:e.clientY});
-  if(gp.size>=2&&pinch){const[a,b]=[...gp.values()];const nd=dist(a,b),mx=(a.x+b.x)/2,my=(a.y+b.y)/2;
-    if(pinch.d>0)zoomAt(nd/pinch.d,mx,my);pinch.d=nd;return;}
+  if(gp.size>=2&&pinch){const[a,b]=[...gp.values()];
+    const nd=dist(a,b),mx=(a.x+b.x)/2,my=(a.y+b.y)/2;
+    // two-finger pan: translate by midpoint movement, then zoom around the midpoint
+    const r=rectOf();vb.x-=(mx-pinch.mx)*vb.w/r.width;vb.y-=(my-pinch.my)*vb.h/r.height;
+    if(pinch.d>0)zoomAt(nd/pinch.d,mx,my);else clampView();
+    pinch.d=nd;pinch.mx=mx;pinch.my=my;return;}
   if(gp.size===1&&grab){if(tap&&Math.hypot(e.clientX-tap.x,e.clientY-tap.y)>8){tap.moved=true;hideHint();}
     panKeep(grab,e.clientX,e.clientY);clampView();}
 });
@@ -586,10 +651,11 @@ function endPtr(e){
   if(wasTap)handleTap(tx,ty);
   if(gp.size===1){const o=[...gp.values()][0];grab={x:bX(o.x),y:bY(o.y)};tap=null;pinch=null;}
   else if(gp.size===0){grab=null;tap=null;pinch=null;}
-  else if(gp.size>=2){const[a,b]=[...gp.values()];pinch={d:dist(a,b)};}
+  else if(gp.size>=2){const[a,b]=[...gp.values()];pinch={d:dist(a,b),mx:(a.x+b.x)/2,my:(a.y+b.y)/2};}
 }
-board.addEventListener('pointerup',endPtr);
-board.addEventListener('pointercancel',endPtr);
+stage.addEventListener('pointerup',endPtr);
+stage.addEventListener('pointercancel',endPtr);
+stage.addEventListener('lostpointercapture',e=>{if(gp.has(e.pointerId)){gp.delete(e.pointerId);if(!gp.size){grab=null;tap=null;pinch=null;}}});
 stage.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.deltaY<0?1.12:1/1.12,e.clientX,e.clientY);},{passive:false});
 document.getElementById('zin').addEventListener('click',()=>zoomCenter(1.45));
 document.getElementById('zout').addEventListener('click',()=>zoomCenter(1/1.45));
@@ -703,13 +769,43 @@ function loadProgress(){
     rebuildOcc();syncDifficultyUI();startPlay({freed,strikes,elapsedMs:data.elapsedMs||0});return true;
   }catch(e){clearProgress();return false;}
 }
+/* Board generation runs in an inline Web Worker so 4-8s Very Hard/Extreme builds
+   never block the main thread: the spinner stays smooth and the page stays responsive.
+   The worker source is the non-executing #genSrc script plus an injected prelude,
+   so there is exactly one copy of the generation code to maintain. */
+const genBlobUrl=(()=>{
+  const src=document.getElementById('genSrc').textContent;
+  const prelude=`const DIRS=${JSON.stringify(DIRS)};const DK=${JSON.stringify(DK)};`+
+    `const OPP=${JSON.stringify(OPP)};const DIFF=${JSON.stringify(DIFF)};`+
+    `let cols=0,rows=0,occ=null,pieces=[],diff='easy',total=0;`+
+    `const inb=(x,y)=>x>=0&&x<cols&&y>=0&&y<rows;`;
+  const harness=`onmessage=e=>{diff=e.data.diff;let tries=0;`+
+    `do{generate();tries++;}while(tries<4&&total<8);`+
+    `postMessage({pieces,occ,total,cols,rows});};`;
+  return URL.createObjectURL(new Blob([prelude+'\n'+src+'\n'+harness],{type:'text/javascript'}));
+})();
+let genWorker=null;
 function newLevel(){
   document.getElementById('overlay').classList.remove('show');animating=false;clearProgress();syncDifficultyUI();
-  let genTries=0;
-  do{generate();genTries++;}while(genTries<4&&total<8);
-  snapshot();
-  startPlay();
-  saveProgress();
+  const busy=document.getElementById('busy');
+  busy.classList.add('show');
+  if(genWorker)genWorker.terminate();            // difficulty changed mid-build: honor the new choice
+  genWorker=new Worker(genBlobUrl);
+  genWorker.onmessage=e=>{
+    genWorker.terminate();genWorker=null;
+    ({total,cols,rows}=e.data);
+    pieces=e.data.pieces;occ=e.data.occ;
+    snapshot();
+    startPlay();
+    saveProgress();
+    busy.classList.remove('show');
+  };
+  genWorker.onerror=err=>{
+    console.error('generation worker failed',err);
+    genWorker.terminate();genWorker=null;
+    busy.classList.remove('show');
+  };
+  genWorker.postMessage({diff});
 }
 function restartSame(){                          // replay the identical board (used after 3 strikes)
   if(!savedPieces){newLevel();return;}
