@@ -278,6 +278,13 @@ function placeGen(cells,dir,hx,hy){
   genFilled+=cells.length;
   pieces.push({id:genNextId,cells,dir,hx,hy,alive:true});genNextId++;
 }
+function layerCap(x,y){
+  // ~60% of the perimeter of this cell's onion layer: outer snakes may sweep
+  // long, inner snakes are forced short, and no piece can lap its own ring
+  const d=depthOf(x,y);
+  const per=Math.max(8,2*((cols-2*d)+(rows-2*d))-4);
+  return Math.round(per*.6);
+}
 function placePass(tier,goal){
   let placedAny=false;
   const N=cols*rows;
@@ -288,7 +295,8 @@ function placePass(tier,goal){
     if(!dirs.length)continue;
     dirs.sort(()=>Math.random()-0.5);
     for(const dir of dirs){
-      const target=tier.lo+Math.floor(Math.pow(Math.random(),.5)*(tier.hi-tier.lo+1));
+      let target=tier.lo+Math.floor(Math.pow(Math.random(),.5)*(tier.hi-tier.lo+1));
+      target=Math.max(tier.min,Math.min(target,layerCap(hx,hy)));
       const cells=growSnake(hx,hy,dir,target,tier.min);
       if(cells){placeGen(cells,dir,hx,hy);placedAny=true;break;}
     }
@@ -331,7 +339,7 @@ function repairPass(stopAt){
         if(occ[hy][hx]!==-1)continue;
         const dirs=DK.filter(d=>rayClearGen(hx,hy,d)).sort(()=>Math.random()-.5);
         for(const dir of dirs){
-          const cells=growSnake(hx,hy,dir,Math.min(comp.length,Math.round(DIFF[diff].maxLen*1.5)),2,region);
+          const cells=growSnake(hx,hy,dir,Math.min(comp.length,DIFF[diff].maxLen,layerCap(hx,hy)),2,region);
           if(cells){placeGen(cells,dir,hx,hy);progress=true;done=true;break;}
         }
         if(done)break;
@@ -371,7 +379,7 @@ function tryAbsorb(x,y,strict){
     if(!inb(nx,ny))continue;
     const id=occ[ny][nx];if(id===-1)continue;
     const p=pieces.find(q=>q.id===id);
-    if(p.cells.length>=Math.round(DIFF[diff].maxLen*1.15))continue;  // no monster pieces
+    if(p.cells.length>=DIFF[diff].maxLen)continue;   // maxLen is a hard cap, absorb included
     {const ddx=DIRS[p.dir][0],ddy=DIRS[p.dir][1];                    // not onto its own escape ray
      if(ddx!==0?(y===p.hy&&Math.sign(x-p.hx)===ddx):(x===p.hx&&Math.sign(y-p.hy)===ddy))continue;}
     const[tx,ty]=p.cells[p.cells.length-1];
@@ -518,11 +526,11 @@ const DIRS={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]};
 const DK=Object.keys(DIRS);
 const OPP={up:"down",down:"up",left:"right",right:"left"};
 const DIFF={
-  easy:{cols:20,rows:24,minLen:5,maxLen:26,label:"Easy"},
-  medium:{cols:26,rows:32,minLen:6,maxLen:38,label:"Medium"},
-  hard:{cols:32,rows:42,minLen:7,maxLen:60,label:"Hard"},
-  veryHard:{cols:40,rows:54,minLen:8,maxLen:86,label:"Very Hard"},
-  extreme:{cols:48,rows:64,minLen:9,maxLen:110,label:"Extreme"}
+  easy:{cols:20,rows:24,minLen:5,maxLen:16,label:"Easy"},
+  medium:{cols:26,rows:32,minLen:6,maxLen:22,label:"Medium"},
+  hard:{cols:32,rows:42,minLen:7,maxLen:28,label:"Hard"},
+  veryHard:{cols:40,rows:54,minLen:8,maxLen:36,label:"Very Hard"},
+  extreme:{cols:48,rows:64,minLen:9,maxLen:46,label:"Extreme"}
 };
 const SAVE_KEY='arrowout_saved_game_v6';
 const MAX_STRIKES=3;
