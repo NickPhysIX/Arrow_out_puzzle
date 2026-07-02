@@ -610,7 +610,7 @@ const STUB    =0.55;    // shaft length for a single-cell arrow, in cells
 
 let cols,rows,cell=CELL,strokeW,pieces,occ,elmap,pieceById,diff='easy';
 let freed,total,strikes,running=false,animating=false,startT=0,elapsedBase=0,timerId=null;
-let BW=0,BH=0,vb={x:0,y:0,w:0,h:0},fitW=0,minW=0,userZoomed=false;   // view state
+let BW=0,BH=0,boardPad=0,VX=0,VY=0,VW=0,VH=0,vb={x:0,y:0,w:0,h:0},fitW=0,minW=0,userZoomed=false;   // view state
 const board=document.getElementById('board');
 const stage=document.querySelector('.stage');
 const inb=(x,y)=>x>=0&&x<cols&&y>=0&&y<rows;
@@ -655,6 +655,7 @@ function drawPiece(p,s){const we=p._t.bodyArc+s,ws=we-p._t.bodyArc;
 /* ---------- render ---------- */
 function render(){
   BW=cols*cell;BH=rows*cell;
+  boardPad=cell*1.15;VX=-boardPad;VY=-boardPad;VW=BW+boardPad*2;VH=BH+boardPad*2;
   while(board.firstChild)board.removeChild(board.firstChild);
   elmap=new Map();pieceById=new Map();
   strokeW=Math.max(3,cell*STROKE_F);const sw=strokeW;
@@ -682,21 +683,21 @@ function render(){
     drawPiece(p,0);
   }
   board.appendChild(gBody);board.appendChild(gHit);
-  if(!vb.w){vb={x:0,y:0,w:BW,h:BH};}
-  board.setAttribute('viewBox',`0 0 ${BW} ${BH}`);
+  if(!vb.w){vb={x:VX,y:VY,w:VW,h:VH};}
+  board.setAttribute('viewBox',`${VX} ${VY} ${VW} ${VH}`);
 }
 
 /* ---------- zoom & pan (SVG viewBox) ---------- */
 const rectOf=()=>board.getBoundingClientRect();
 const aspect=()=>{const r=rectOf();return (r.width>0&&r.height>0)?r.width/r.height:0.6;};
 const applyView=()=>board.setAttribute('viewBox',`${vb.x.toFixed(2)} ${vb.y.toFixed(2)} ${vb.w.toFixed(2)} ${vb.h.toFixed(2)}`);
-function calcFitW(){const a=aspect(),pad=1.06;return (BW/BH>=a)?BW*pad:(BH*pad)*a;}
+function calcFitW(){const a=aspect();return (VW/VH>=a)?VW:(VH)*a;}
 function fitView(){const a=aspect();fitW=calcFitW();minW=Math.min(fitW,6.5*cell);
-  vb.w=fitW;vb.h=vb.w/a;vb.x=(BW-vb.w)/2;vb.y=(BH-vb.h)/2;userZoomed=false;applyView();}
+  vb.w=fitW;vb.h=vb.w/a;vb.x=VX+(VW-vb.w)/2;vb.y=VY+(VH-vb.h)/2;userZoomed=false;applyView();}
 function clampView(){const a=aspect();
   vb.w=Math.max(minW,Math.min(fitW,vb.w));vb.h=vb.w/a;
-  vb.x=(vb.w>=BW)?(BW-vb.w)/2:Math.max(0,Math.min(BW-vb.w,vb.x));
-  vb.y=(vb.h>=BH)?(BH-vb.h)/2:Math.max(0,Math.min(BH-vb.h,vb.y));
+  vb.x=(vb.w>=VW)?VX+(VW-vb.w)/2:Math.max(VX,Math.min(VX+VW-vb.w,vb.x));
+  vb.y=(vb.h>=VH)?VY+(VH-vb.h)/2:Math.max(VY,Math.min(VY+VH-vb.h,vb.y));
   applyView();}
 const bX=sx=>{const r=rectOf();return vb.x+(sx-r.left)*vb.w/r.width;};
 const bY=sy=>{const r=rectOf();return vb.y+(sy-r.top)*vb.h/r.height;};
