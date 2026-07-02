@@ -218,6 +218,11 @@ function growSnake(hx,hy,dir,target,minAccept,region){
   // outward escape ray stays clear by construction. (Repair mode is exempt.)
   const minDepth=region?0:Math.max(0,depthOf(hx,hy)-1);
   const N=cols*rows,minA=minAccept||2;
+  // an arrow is a solid object: its body may never sit on its own escape ray,
+  // otherwise the head visually points into itself (and strict physics blocks it)
+  const raySet=new Uint8Array(N);
+  {let rx=hx+DIRS[dir][0],ry=hy+DIRS[dir][1];
+   while(inb(rx,ry)){raySet[ry*cols+rx]=1;rx+=DIRS[dir][0];ry+=DIRS[dir][1];}}
   const attempts=target>=60?3:target>=30?5:10;
   let best=null;
   for(let a=0;a<attempts;a++){
@@ -231,6 +236,7 @@ function growSnake(hx,hy,dir,target,minAccept,region){
         if(nd===OPP[last])continue;
         const nx=cx+DIRS[nd][0],ny=cy+DIRS[nd][1];
         if(!inb(nx,ny)||occ[ny][nx]!==-1||mask[ny*cols+nx])continue;
+        if(raySet[ny*cols+nx])continue;
         if(region&&!region.has(ny*cols+nx))continue;
         if(depthOf(nx,ny)<minDepth)continue;
         let rhythm;
@@ -348,7 +354,7 @@ function solvableNow(){
   const o=occ.map(r=>r.slice());
   const alive=new Set(pieces.map(p=>p.id));
   const isFree=p=>{const[dx,dy]=DIRS[p.dir];let cx=p.hx+dx,cy=p.hy+dy;
-    while(inb(cx,cy)){const v=o[cy][cx];if(v!==-1&&v!==p.id)return false;cx+=dx;cy+=dy;}return true;};
+    while(inb(cx,cy)){const v=o[cy][cx];if(v!==-1)return false;cx+=dx;cy+=dy;}return true;};  // own body blocks too
   let removed=true;
   while(alive.size&&removed){
     removed=false;
@@ -366,6 +372,8 @@ function tryAbsorb(x,y,strict){
     const id=occ[ny][nx];if(id===-1)continue;
     const p=pieces.find(q=>q.id===id);
     if(p.cells.length>=Math.round(DIFF[diff].maxLen*1.15))continue;  // no monster pieces
+    {const ddx=DIRS[p.dir][0],ddy=DIRS[p.dir][1];                    // not onto its own escape ray
+     if(ddx!==0?(y===p.hy&&Math.sign(x-p.hx)===ddx):(x===p.hx&&Math.sign(y-p.hy)===ddy))continue;}
     const[tx,ty]=p.cells[p.cells.length-1];
     if(tx!==nx||ty!==ny)continue;               // must attach at the tail
     // for a 1-cell piece the tail IS the head: only allow the straight-behind cell
@@ -516,7 +524,7 @@ const DIFF={
   veryHard:{cols:40,rows:54,minLen:8,maxLen:86,label:"Very Hard"},
   extreme:{cols:48,rows:64,minLen:9,maxLen:110,label:"Extreme"}
 };
-const SAVE_KEY='arrowout_saved_game_v5';
+const SAVE_KEY='arrowout_saved_game_v6';
 const MAX_STRIKES=3;
 const CELL=44;          // fixed board-space cell size; zoom is handled by the SVG viewBox
 // arrow look — tweak freely
@@ -534,7 +542,7 @@ const inb=(x,y)=>x>=0&&x<cols&&y>=0&&y<rows;
 
 /* piece is free iff head's forward ray clear of OTHER live pieces; returns gap (empty cells ahead) */
 function freeInfo(p){const[dx,dy]=DIRS[p.dir];let cx=p.hx+dx,cy=p.hy+dy,gap=0;
-  while(inb(cx,cy)){const o=occ[cy][cx];if(o!==-1&&o!==p.id)return{free:false,gap};gap++;cx+=dx;cy+=dy;}
+  while(inb(cx,cy)){const o=occ[cy][cx];if(o!==-1)return{free:false,gap};gap++;cx+=dx;cy+=dy;}
   return{free:true,gap};}
 
 /* ---------- geometry ---------- */
