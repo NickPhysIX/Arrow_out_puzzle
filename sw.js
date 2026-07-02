@@ -1,5 +1,5 @@
 // Arrow Out - offline app shell. Bump CACHE when you change files.
-const CACHE = 'arrow-out-qol-v27';
+const CACHE = 'arrow-out-qol-v28-sound';
 const ASSETS = ['./','index.html','manifest.webmanifest','icon-180.png','icon-192.png','icon-512.png'];
 
 self.addEventListener('install', e => {

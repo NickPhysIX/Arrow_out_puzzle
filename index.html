@@ -52,6 +52,12 @@
     font-size:22px;font-weight:900;line-height:1;cursor:pointer;box-shadow:0 3px 0 var(--shadow);
     display:flex;align-items:center;justify-content:center;touch-action:manipulation}
   .zbtn:active{transform:translateY(2px);box-shadow:0 1px 0 var(--shadow)}
+  .sound{position:fixed;top:calc(8px + env(safe-area-inset-top));right:12px;z-index:8;
+    width:40px;height:40px;border:none;border-radius:12px;background:var(--cream-2);color:var(--ink);
+    box-shadow:0 3px 0 var(--shadow);display:flex;align-items:center;justify-content:center;
+    cursor:pointer;touch-action:manipulation}
+  .sound:active{transform:translateY(2px);box-shadow:0 1px 0 var(--shadow)}
+  .sound svg{width:22px;height:22px;display:block}
   .busy{position:absolute;inset:0;display:none;flex-direction:column;gap:12px;align-items:center;justify-content:center;
     background:rgba(255,255,255,.75);backdrop-filter:blur(2px);z-index:6;font-weight:800;color:#8a6a45}
   .busy.show{display:flex}
@@ -87,6 +93,7 @@
 </style>
 </head>
 <body>
+  <button class="sound" id="soundBtn" aria-label="Mute sound"></button>
   <header>
     <div class="title">Arrow Out</div>
     <div class="sub" id="diffLabel">Easy</div>
@@ -733,6 +740,7 @@ function handleTap(sx,sy){
    unreliable on iOS Safari (implicit touch capture goes to the child path under the
    finger), which silently killed one-finger panning. On a div, capture just works. */
 stage.addEventListener('pointerdown',e=>{
+  ensureAudio();                               // unlock audio on the first real gesture
   try{stage.setPointerCapture(e.pointerId);}catch(_){}
   gp.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(gp.size===1){grab={x:bX(e.clientX),y:bY(e.clientY)};tap={x:e.clientX,y:e.clientY,t:performance.now(),moved:false};pinch=null;}
@@ -773,6 +781,62 @@ const reduce=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
 function animate(dur,step,done){const t0=performance.now();
   (function frame(now){let t=Math.min(1,(now-t0)/dur);step(t);if(t<1)requestAnimationFrame(frame);else done&&done();})(performance.now());}
 
+/* ---------- sound (Web Audio, synthesised so nothing extra to cache) ---------- */
+const SOUND_KEY='arrowout_muted';
+let audioCtx=null,muted=store.get(SOUND_KEY)==='1';
+function ensureAudio(){                       // create/resume only inside a user gesture (iOS rule)
+  if(muted)return null;
+  if(!audioCtx){
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC)return null;
+    try{audioCtx=new AC();}catch(e){audioCtx=null;return null;}
+  }
+  if(audioCtx.state==='suspended')audioCtx.resume().catch(()=>{});
+  return audioCtx;
+}
+function playWhoosh(){                         // arrow escaping: filtered noise sweeping up and out
+  const ctx=ensureAudio();if(!ctx)return;
+  const now=ctx.currentTime,dur=0.34;
+  const buf=ctx.createBuffer(1,Math.ceil(ctx.sampleRate*dur),ctx.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+  const src=ctx.createBufferSource();src.buffer=buf;
+  const bp=ctx.createBiquadFilter();bp.type='bandpass';bp.Q.value=0.9;
+  bp.frequency.setValueAtTime(520,now);
+  bp.frequency.exponentialRampToValueAtTime(3800,now+dur);
+  const g=ctx.createGain();
+  g.gain.setValueAtTime(0.0001,now);
+  g.gain.exponentialRampToValueAtTime(0.20,now+0.06);
+  g.gain.exponentialRampToValueAtTime(0.0001,now+dur);
+  src.connect(bp);bp.connect(g);g.connect(ctx.destination);
+  src.start(now);src.stop(now+dur);
+}
+function playThud(){                           // arrow blocked: low body-thump plus a short impact click
+  const ctx=ensureAudio();if(!ctx)return;
+  const now=ctx.currentTime,dur=0.20;
+  const osc=ctx.createOscillator();osc.type='sine';
+  osc.frequency.setValueAtTime(190,now);
+  osc.frequency.exponentialRampToValueAtTime(58,now+0.13);
+  const g=ctx.createGain();
+  g.gain.setValueAtTime(0.0001,now);
+  g.gain.exponentialRampToValueAtTime(0.5,now+0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001,now+dur);
+  osc.connect(g);g.connect(ctx.destination);
+  osc.start(now);osc.stop(now+dur);
+  const nlen=Math.ceil(ctx.sampleRate*0.045);
+  const nb=ctx.createBuffer(1,nlen,ctx.sampleRate),nd=nb.getChannelData(0);
+  for(let i=0;i<nlen;i++)nd[i]=(Math.random()*2-1)*(1-i/nlen);   // decaying click
+  const ns=ctx.createBufferSource();ns.buffer=nb;
+  const lp=ctx.createBiquadFilter();lp.type='lowpass';lp.frequency.value=1400;
+  const ng=ctx.createGain();ng.gain.value=0.28;
+  ns.connect(lp);lp.connect(ng);ng.connect(ctx.destination);
+  ns.start(now);ns.stop(now+0.045);
+}
+const SPK_ON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.7 6a9 9 0 0 1 0 12"/></svg>';
+const SPK_OFF='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M17 9.5l5 5M22 9.5l-5 5"/></svg>';
+function syncMuteUI(){const b=document.getElementById('soundBtn');
+  b.innerHTML=muted?SPK_OFF:SPK_ON;b.setAttribute('aria-label',muted?'Unmute sound':'Mute sound');}
+
 function onClick(p){
   if(!running||animating||!p.alive)return;
   if(!startT)startTimer();
@@ -781,6 +845,7 @@ function onClick(p){
     for(const[x,y]of p.cells)occ[y][x]=-1;   // vacate immediately for others
     p.alive=false;animating=true;
     const el=elmap.get(p.id);el.g.classList.add('free');el.hit.style.pointerEvents='none';
+    playWhoosh();
     const dist=p._t.total-p._t.bodyArc;
     if(reduce()){el.g.remove();el.hit.remove();animating=false;afterFree();return;}
     const dur=Math.max(240,Math.min(620,dist*7));
@@ -788,9 +853,9 @@ function onClick(p){
   }else{
     strikes++;drawDrops();animating=true;
     const el=elmap.get(p.id);const adv=info.gap*cell+cell*0.34;
-    if(reduce()){el.g.classList.add('crash');setTimeout(()=>el.g.classList.remove('crash'),420);animating=false;afterStrike();return;}
+    if(reduce()){el.g.classList.add('crash');playThud();setTimeout(()=>el.g.classList.remove('crash'),420);animating=false;afterStrike();return;}
     animate(150,t=>drawPiece(p,easeOut(t)*adv),()=>{
-      el.g.classList.add('crash');
+      el.g.classList.add('crash');playThud();
       animate(230,t=>drawPiece(p,adv*(1-t)),()=>{
         setTimeout(()=>el.g.classList.remove('crash'),160);animating=false;afterStrike();});
     });
@@ -929,6 +994,11 @@ document.getElementById('newBtn').addEventListener('click',()=>{stopTimer();newL
 document.getElementById('ovNext').addEventListener('click',()=>{stopTimer();newLevel();});
 document.getElementById('ovRetry').addEventListener('click',()=>{stopTimer();restartSame();});
 document.getElementById('hintBtn').addEventListener('click',hint);
+document.getElementById('soundBtn').addEventListener('click',()=>{
+  muted=!muted;store.set(SOUND_KEY,muted?'1':'0');syncMuteUI();
+  if(!muted)ensureAudio();                     // resume + confirm it's audible again
+});
+syncMuteUI();
 let rt;addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(()=>{
   if(!vb.w)return;
   if(userZoomed){fitW=calcFitW();minW=Math.min(fitW,6.5*cell);clampView();}else fitView();
