@@ -17,7 +17,7 @@
     --cream:#ffffff;--cream-2:#f0f0f0;--ink:#1b1b1b;
     --arrow:#1b1b1b;--arrow-dark:#000000;--free:#1b1b1b;
     --title:#1b1b1b;--sub:#8a8a8a;--crash:#e23b3b;
-    --drop:#e23b3b;--drop-empty:#d4d4d4;--track:#ececec;--shadow:rgba(0,0,0,.14);
+    --drop:#e23b3b;--drop-empty:#d4d4d4;--track:#ececec;--grid:#d9d9d9;--shadow:rgba(0,0,0,.14);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{height:100%}
@@ -39,6 +39,7 @@
   .meta b{color:var(--ink)}
   .stage{position:relative;flex:1;min-height:0;width:100%;overflow:hidden;touch-action:none}
   #board{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
+  .gridBg{fill:url(#gridDots);pointer-events:none}
   .body{fill:none;stroke:var(--arrow);stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
   .head{fill:none;stroke:var(--arrow);stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
   .hit{fill:none;stroke:transparent;stroke-linecap:round;stroke-linejoin:round;pointer-events:stroke}
@@ -57,13 +58,18 @@
   .spin{width:28px;height:28px;border-radius:50%;border:4px solid #e5d5bd;border-top-color:#8a6a45;animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   .zhint{position:absolute;left:12px;bottom:8px;font-size:12px;font-weight:800;color:#b3b3b3;z-index:5;pointer-events:none;
-    transition:opacity .5s ease}
+    opacity:.78;transition:opacity .7s ease}
   .controls{width:100%;max-width:720px;display:grid;gap:10px;padding:8px 20px calc(16px + env(safe-area-inset-bottom))}
   .controlRow,.actionRow{display:flex;gap:10px;justify-content:center;align-items:center}
   .controlRow{display:grid;grid-template-columns:minmax(0,1fr) auto}
   .selectWrap{height:44px;border-radius:14px;background:var(--cream-2);box-shadow:0 3px 0 var(--shadow);
-    display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:8px;padding:0 12px;color:#8a8a8a;font-size:12px;font-weight:900}
-  .selectWrap select{min-width:0;width:100%;border:none;background:transparent;color:var(--ink);font:inherit;font-size:16px;font-weight:900;outline:none}
+    display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:8px;padding:0 12px;color:#8a8a8a;font-size:12px;font-weight:900;min-width:0}
+  .selectWrap select{min-width:0;width:100%;border:none;background:transparent;color:var(--ink);font:inherit;font-size:16px;font-weight:900;outline:none;text-overflow:ellipsis}
+  @media (max-width:430px){
+    .selectWrap{grid-template-columns:minmax(0,1fr);padding:0 10px}
+    .selectWrap span{display:none}
+    .selectWrap select{font-size:15px}
+  }
   button.btn{font-family:inherit;font-weight:900;font-size:16px;border:none;cursor:pointer;padding:12px 18px;border-radius:16px;color:var(--ink);background:var(--cream-2);box-shadow:0 3px 0 var(--shadow);transition:transform .08s,box-shadow .08s}
   button.btn:active{transform:translateY(2px);box-shadow:0 1px 0 var(--shadow)}
   button.btn.on{background:var(--ink);color:#fff;box-shadow:0 3px 0 #000}
@@ -593,7 +599,7 @@ const DIFF={
   veryHard:{cols:40,rows:54,minLen:8,maxLen:36,label:"Very Hard"},
   extreme:{cols:48,rows:64,minLen:9,maxLen:46,label:"Extreme"}
 };
-const SAVE_KEY='arrowout_saved_game_v8';
+const SAVE_KEY='arrowout_saved_game_v9';
 const MAX_STRIKES=3;
 const CELL=44;          // fixed board-space cell size; zoom is handled by the SVG viewBox
 // arrow look — tweak freely
@@ -652,6 +658,17 @@ function render(){
   while(board.firstChild)board.removeChild(board.firstChild);
   elmap=new Map();pieceById=new Map();
   strokeW=Math.max(3,cell*STROKE_F);const sw=strokeW;
+  const defs=document.createElementNS(SVGNS,'defs');
+  const pattern=document.createElementNS(SVGNS,'pattern');
+  pattern.setAttribute('id','gridDots');pattern.setAttribute('width',cell);pattern.setAttribute('height',cell);
+  pattern.setAttribute('patternUnits','userSpaceOnUse');
+  const dot=document.createElementNS(SVGNS,'circle');
+  dot.setAttribute('cx',cell/2);dot.setAttribute('cy',cell/2);dot.setAttribute('r',Math.max(1.1,cell*.035));
+  dot.setAttribute('fill','var(--grid)');dot.setAttribute('opacity','.72');
+  pattern.appendChild(dot);defs.appendChild(pattern);board.appendChild(defs);
+  const grid=document.createElementNS(SVGNS,'rect');
+  grid.setAttribute('class','gridBg');grid.setAttribute('x',0);grid.setAttribute('y',0);
+  grid.setAttribute('width',BW);grid.setAttribute('height',BH);board.appendChild(grid);
   const gBody=document.createElementNS(SVGNS,'g'),gHit=document.createElementNS(SVGNS,'g');
   for(const p of pieces){
     if(!p.alive)continue;buildTrack(p);pieceById.set(p.id,p);
@@ -687,7 +704,18 @@ function panKeep(p,sx,sy){const r=rectOf();vb.x=p.x-(sx-r.left)*vb.w/r.width;vb.
 function zoomAt(f,sx,sy){const p={x:bX(sx),y:bY(sy)};vb.w=Math.max(minW,Math.min(fitW,vb.w/f));vb.h=vb.w/aspect();
   panKeep(p,sx,sy);userZoomed=true;hideHint();clampView();}
 function zoomCenter(f){const r=rectOf();zoomAt(f,r.left+r.width/2,r.top+r.height/2);}
-let hintGone=false;function hideHint(){if(hintGone)return;hintGone=true;const h=document.getElementById('zhint');if(h)h.style.opacity='0';}
+let hintGone=false,hintTimer=null;
+function showHint(){
+  const h=document.getElementById('zhint');if(!h)return;
+  hintGone=false;h.style.opacity='.78';
+  if(hintTimer)clearTimeout(hintTimer);
+  hintTimer=setTimeout(hideHint,2800);
+}
+function hideHint(){
+  if(hintGone)return;hintGone=true;
+  if(hintTimer){clearTimeout(hintTimer);hintTimer=null;}
+  const h=document.getElementById('zhint');if(h)h.style.opacity='0';
+}
 
 const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 const gp=new Map();let grab=null,tap=null,pinch=null,lastTap=0,lastXY=null;
@@ -833,6 +861,7 @@ function startPlay(opts={}){
   gp.clear();grab=tap=pinch=null;vb.w=0;
   render();
   requestAnimationFrame(fitView);
+  showHint();
 }
 function loadProgress(){
   const raw=store.get(SAVE_KEY);if(!raw)return false;
