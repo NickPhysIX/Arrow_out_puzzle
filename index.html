@@ -134,13 +134,13 @@ const DIRS={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]};
 const DK=Object.keys(DIRS);
 const OPP={up:"down",down:"up",left:"right",right:"left"};
 const DIFF={
-  easy:{cols:7,rows:9,minLen:4,maxLen:12,targetFill:.80,candidates:6,label:"Easy"},
-  medium:{cols:10,rows:13,minLen:6,maxLen:18,targetFill:.90,candidates:7,label:"Medium"},
-  hard:{cols:14,rows:18,minLen:8,maxLen:30,targetFill:.95,candidates:8,label:"Hard"},
-  veryHard:{cols:20,rows:26,minLen:10,maxLen:45,targetFill:.95,candidates:8,label:"Very Hard"},
-  extreme:{cols:28,rows:38,minLen:12,maxLen:70,targetFill:.95,candidates:8,label:"Extreme"}
+  easy:{cols:10,rows:12,minLen:4,maxLen:12,targetFill:.84,candidates:5,label:"Easy"},
+  medium:{cols:13,rows:16,minLen:5,maxLen:18,targetFill:.88,candidates:6,label:"Medium"},
+  hard:{cols:16,rows:21,minLen:6,maxLen:30,targetFill:.90,candidates:7,label:"Hard"},
+  veryHard:{cols:20,rows:27,minLen:7,maxLen:42,targetFill:.91,candidates:7,label:"Very Hard"},
+  extreme:{cols:24,rows:32,minLen:8,maxLen:55,targetFill:.92,candidates:7,label:"Extreme"}
 };
-const SAVE_KEY='arrowout_saved_game_v3';
+const SAVE_KEY='arrowout_saved_game_v4';
 const MAX_STRIKES=3;
 const CELL=44;          // fixed board-space cell size; zoom is handled by the SVG viewBox
 // arrow look — tweak freely
@@ -202,10 +202,12 @@ function growOptions(hx,hy,headDir,cells,last,run){
     if(!inb(nx,ny)||occ[ny][nx]!==-1||used.has(key))continue;
     if(onRay(hx,hy,headDir,nx,ny))continue;           // never cross the head's escape ray
     const straight=nd===last;
-    const runBias=straight?(run<3?5.2:1.35):(run>=2?2.25:.8);
-    const space=1+freeNeighborCount(nx,ny,used)*.28;  // avoid dead ends when possible
-    const compact=1+depthOf(nx,ny)*.08;
-    opts.push({nx,ny,nd,w:runBias*space*compact});
+    let rhythm;
+    if(straight) rhythm=run<=1?7.0:run===2?2.4:.22; // after 2-4 blocks, strongly prefer a turn
+    else rhythm=run<=1?.28:run===2?5.8:9.2;         // right after a turn, strongly prefer a straight run
+    const space=1+freeNeighborCount(nx,ny,used)*.34; // avoid dead ends when possible
+    const compact=1+depthOf(nx,ny)*.10;
+    opts.push({nx,ny,nd,w:rhythm*space*compact});
   }
   return opts;
 }
@@ -254,68 +256,39 @@ function targetLength(cfg,mode='primary'){
 // Single-phase reverse-placement: every placed piece has a clear escape ray over the pieces already
 // down, so removing them in reverse order always solves. The candidate scorer below favors dense
 // boards with long snakes and rejects the old failure mode: a field of mostly two-cell arrows.
-function serpentinePath(){
-  const path=[],vertical=Math.random()<.5;
-  if(vertical){
-    for(let x=0;x<cols;x++){
-      if(x%2===0){for(let y=0;y<rows;y++)path.push([x,y]);}
-      else{for(let y=rows-1;y>=0;y--)path.push([x,y]);}
-    }
-  }else{
-    for(let y=0;y<rows;y++){
-      if(y%2===0){for(let x=0;x<cols;x++)path.push([x,y]);}
-      else{for(let x=cols-1;x>=0;x--)path.push([x,y]);}
-    }
-  }
-  if(Math.random()<.5)path.reverse();
-  return path;
-}
-function straightHead(cells){
-  if(cells.length<3)return true;
-  const a=cells[0],b=cells[1],c=cells[2];
-  return (a[0]-b[0])===(b[0]-c[0])&&(a[1]-b[1])===(b[1]-c[1]);
-}
-function straightStartAt(path,i){
-  if(path.length-i<3)return true;
-  return straightHead([path[i],path[i+1],path[i+2]]);
-}
 function attemptGenerate(){
   const cfg=DIFF[diff];cols=cfg.cols;rows=cfg.rows;
   occ=Array.from({length:rows},()=>Array(cols).fill(-1));pieces=[];
-  const path=serpentinePath();
-  let at=0,id=0;
-  while(at<path.length){
-    const remaining=path.length-at;
-    let len;
-    if(remaining<=cfg.maxLen)len=remaining;
-    else{
-      const span=cfg.maxLen-cfg.minLen+1;
-      len=cfg.minLen+Math.floor(Math.random()*span);
-      len=Math.min(len,remaining-cfg.minLen);
+  let id=0;
+  const density=()=>occCount()/(cols*rows);
+  const placePass=(minLen,mode='primary',limit=Infinity)=>{
+    let placedAny=false,placed=0;
+    const order=orderedCells();
+    for(const[hx,hy]of order){
+      if(placed>=limit)break;
+      if(occ[hy][hx]!==-1)continue;
+      const dirs=DK.filter(d=>rayClearGen(hx,hy,d));
+      if(!dirs.length)continue;
+      dirs.sort(()=>Math.random()-0.5);
+      for(const dir of dirs){
+        const target=targetLength(cfg,mode);
+        const cells=growSnake(hx,hy,dir,target,minLen);
+        if(cells.length>=minLen){
+          for(const[x,y]of cells)occ[y][x]=id;
+          pieces.push({id,cells,dir,hx,hy,alive:true});id++;
+          placed++;placedAny=true;break;
+        }
+      }
     }
-    while(at+len<path.length){
-      const rest=path.length-(at+len);
-      if(rest>=cfg.minLen&&straightStartAt(path,at+len))break;
-      len++;
-      if(len>=remaining)break;
-    }
-    const cells=path.slice(at,at+len).map(c=>[c[0],c[1]]);
-    if(cells.length<cfg.minLen&&pieces.length){
-      const prev=pieces[pieces.length-1];
-      for(const c of cells){prev.cells.push(c);occ[c[1]][c[0]]=prev.id;}
-      normalizeGeneratedPiece(prev);
-      break;
-    }
-    const dir=dirBetween(cells[1],cells[0])||"right";
-    const[hx,hy]=cells[0];
-    for(const[x,y]of cells)occ[y][x]=id;
-    pieces.push({id,cells,dir,hx,hy,alive:true});at+=len;id++;
-  }
+    return placedAny;
+  };
+  let guard=0;
+  while(density()<cfg.targetFill-.16&&guard++<cols*rows&&placePass(cfg.minLen,'primary')){}
+  while(density()<cfg.targetFill-.03&&placePass(Math.max(5,Math.floor(cfg.minLen*.75)),'bridge')){}
+  // Last mile only: enough small fillers to make the board feel packed, not enough to dominate it.
+  const fillerLimit=Math.max(3,Math.floor((cols*rows)*.055));
+  placePass(3,'filler3',fillerLimit);
   total=pieces.length;
-}
-function normalizeGeneratedPiece(p){
-  p.hx=p.cells[0][0];p.hy=p.cells[0][1];
-  if(p.cells.length>1)p.dir=dirBetween(p.cells[1],p.cells[0])||p.dir;
 }
 function boardScore(){
   const filled=occCount(),density=filled/(cols*rows);
