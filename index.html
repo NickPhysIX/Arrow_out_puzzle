@@ -130,9 +130,9 @@
 
 <script type="text/plain" id="genSrc">
 /* ---------- generation (reverse construction -> always solvable) ----------
-   v23: compact maze texture. Long snakes are placed first, then medium snakes
-   densify the gaps. The grower favors short straight runs followed by tight
-   90-degree turns, especially turns that run beside the snake's own body. */
+   v24: compact maze texture with seeded hero loops. A few deliberate spiral,
+   U-loop, and hook snakes are placed first, then the organic packer fills
+   around them with short straight runs and self-parallel turns. */
 function rayClearGen(x,y,dir,mask){const[dx,dy]=DIRS[dir];let cx=x+dx,cy=y+dy;
   while(inb(cx,cy)){if(occ[cy][cx]!==-1||(mask&&mask[cy*cols+cx]))return false;cx+=dx;cy+=dy;}return true;}
 function anyRayClear(x,y,mask){return DK.some(d=>rayClearGen(x,y,d,mask));}
@@ -156,10 +156,10 @@ function dirBetween(a,b){
 }
 function sampleRunTarget(){
   const r=Math.random();
-  if(r<.20)return 2;
-  if(r<.48)return 3;
-  if(r<.80)return 4;
-  return 5;                             // no full-board straightaways
+  if(r<.22)return 3;
+  if(r<.56)return 4;
+  if(r<.84)return 5;
+  return 6;                             // no full-board straightaways
 }
 function wallNeighbors(x,y,mask){
   let n=0;
@@ -173,6 +173,15 @@ function selfContacts(x,y,mask,px,py){
     if(!inb(nx,ny)||(nx===px&&ny===py))continue;
     if(mask[ny*cols+nx])n++;}
   return n;
+}
+function projectedRunCells(cells,nd){
+  let segs=1;
+  for(let i=cells.length-1;i>0;i--){
+    const d=dirBetween(cells[i-1],cells[i]);
+    if(d!==nd)break;
+    segs++;
+  }
+  return segs+1;
 }
 function placeableHead(x,y,mask){
   // a future piece can start here: some dir has a clear escape ray AND the
@@ -235,15 +244,16 @@ function growSnake(hx,hy,dir,target,minAccept,region){
       for(const nd of DK){
         if(nd===OPP[last])continue;
         if(nd===last&&run>=runTarget)continue;      // hard cap straight corridors
+        if(projectedRunCells(cells,nd)>7)continue;  // robust cap after backtracking
         const nx=cx+DIRS[nd][0],ny=cy+DIRS[nd][1];
         if(!inb(nx,ny)||occ[ny][nx]!==-1||mask[ny*cols+nx])continue;
         if(raySet[ny*cols+nx])continue;
         if(region&&!region.has(ny*cols+nx))continue;
         const contacts=selfContacts(nx,ny,mask,cx,cy);
         let rhythm;
-        if(nd===last) rhythm=7.5;
-        else rhythm=run<2?.25:run<5?7.5:10.5;
-        const spiral=1+contacts*(nd===last?.65:2.15);
+        if(nd===last) rhythm=8;
+        else rhythm=run<3?.15:run<5?8.5:12;
+        const spiral=1+contacts*(nd===last?.8:3.2);
         const pocket=1+wallNeighbors(nx,ny,mask)*.55;
         opts.push({nx,ny,nd,w:rhythm*spiral*pocket});
       }
@@ -277,6 +287,54 @@ function placeGen(cells,dir,hx,hy){
   for(const[x,y]of cells)occ[y][x]=genNextId;
   genFilled+=cells.length;
   pieces.push({id:genNextId,cells,dir,hx,hy,alive:true});genNextId++;
+}
+const TURN_R={up:"right",right:"down",down:"left",left:"up"};
+const TURN_L={up:"left",left:"down",down:"right",right:"up"};
+function turnDir(d,t){return t==="R"?TURN_R[d]:t==="L"?TURN_L[d]:d;}
+const MOTIFS=[
+  {min:18,segs:[["R",4],["R",5],["R",5],["R",4],["R",4],["R",3],["R",3],[null,2]]},
+  {min:16,segs:[["L",5],["L",4],["R",5],["R",3],["R",4],["L",3],[null,3]]},
+  {min:14,segs:[["R",6],["R",4],["L",5],["L",3],["R",4],[null,3]]},
+  {min:12,segs:[["L",5],["R",3],["R",4],["L",4],["R",3],[null,3]]},
+  {min:10,segs:[["R",4],["R",3],["R",4],["L",3],["L",3],[null,3]]}
+];
+function motifCells(hx,hy,dir,motif){
+  let x=hx,y=hy,d=OPP[dir];
+  const cells=[[x,y]],seen=new Set([y*cols+x]);
+  const raySet=new Uint8Array(cols*rows);
+  {let rx=hx+DIRS[dir][0],ry=hy+DIRS[dir][1];
+   while(inb(rx,ry)){raySet[ry*cols+rx]=1;rx+=DIRS[dir][0];ry+=DIRS[dir][1];}}
+  for(const[turn,len]of motif.segs){
+    for(let i=0;i<len;i++){
+      x+=DIRS[d][0];y+=DIRS[d][1];
+      const k=y*cols+x;
+      if(!inb(x,y)||occ[y][x]!==-1||seen.has(k)||raySet[k])return null;
+      cells.push([x,y]);seen.add(k);
+    }
+    d=turnDir(d,turn);
+  }
+  return cells;
+}
+function seedMotifs(){
+  const cfg=DIFF[diff];
+  const want=diff==="extreme"?12:diff==="veryHard"?10:diff==="hard"?6:diff==="medium"?3:1;
+  const usable=MOTIFS.filter(m=>m.min<=cfg.maxLen);
+  if(!usable.length)return;
+  let placed=0,tries=0;
+  while(placed<want&&tries++<want*220){
+    const hx=(Math.random()*cols)|0,hy=(Math.random()*rows)|0;
+    if(occ[hy][hx]!==-1)continue;
+    const dirs=DK.filter(d=>rayClearGen(hx,hy,d)).sort(()=>Math.random()-.5);
+    for(const dir of dirs){
+      const motif=usable[(Math.random()*usable.length)|0];
+      const cells=motifCells(hx,hy,dir,motif);
+      if(!cells||cells.length<cfg.minLen||cells.length>cfg.maxLen)continue;
+      const mask=new Uint8Array(cols*rows);
+      for(const[x,y]of cells)mask[y*cols+x]=1;
+      if(!componentsOK(mask,3))continue;
+      placeGen(cells,dir,hx,hy);placed++;break;
+    }
+  }
 }
 function placePass(tier,goal){
   let placedAny=false;
@@ -449,13 +507,15 @@ function attemptGenerate(){
   const cfg=DIFF[diff];cols=cfg.cols;rows=cfg.rows;
   occ=Array.from({length:rows},()=>Array(cols).fill(-1));pieces=[];genNextId=0;genFilled=0;
   const N=cols*rows,GOAL=.95;
+  seedMotifs();
   // long snakes first, then shorter tiers densify the gaps
+  const tinyMin=(diff==="veryHard"||diff==="extreme")?3:2;
   const tiers=[
     {min:Math.max(cfg.minLen,Math.round(cfg.maxLen*.45)),lo:Math.round(cfg.maxLen*.55),hi:cfg.maxLen,sweeps:3},
     {min:cfg.minLen,lo:cfg.minLen,hi:Math.round(cfg.maxLen*.45),sweeps:6},
     {min:4,lo:4,hi:Math.max(7,cfg.minLen+2),sweeps:4},
     {min:3,lo:3,hi:5,sweeps:3},
-    {min:2,lo:2,hi:3,sweeps:1}
+    {min:tinyMin,lo:tinyMin,hi:Math.max(3,tinyMin),sweeps:1}
   ];
   for(let round=0;round<3&&genFilled/N<.90;round++){
     for(const t of tiers){
@@ -533,7 +593,7 @@ const DIFF={
   veryHard:{cols:40,rows:54,minLen:8,maxLen:36,label:"Very Hard"},
   extreme:{cols:48,rows:64,minLen:9,maxLen:46,label:"Extreme"}
 };
-const SAVE_KEY='arrowout_saved_game_v7';
+const SAVE_KEY='arrowout_saved_game_v8';
 const MAX_STRIKES=3;
 const CELL=44;          // fixed board-space cell size; zoom is handled by the SVG viewBox
 // arrow look — tweak freely
