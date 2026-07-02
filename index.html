@@ -17,7 +17,7 @@
     --cream:#ffffff;--cream-2:#f0f0f0;--ink:#1b1b1b;
     --arrow:#1b1b1b;--arrow-dark:#000000;--free:#1b1b1b;
     --title:#1b1b1b;--sub:#8a8a8a;--crash:#e23b3b;
-    --drop:#e23b3b;--drop-empty:#d4d4d4;--track:#ececec;--grid:#d9d9d9;--shadow:rgba(0,0,0,.14);
+    --drop:#e23b3b;--drop-empty:#d4d4d4;--track:#ececec;--grid:#c8c8c8;--shadow:rgba(0,0,0,.14);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{height:100%}
@@ -664,8 +664,8 @@ function render(){
   pattern.setAttribute('id','gridDots');pattern.setAttribute('width',cell);pattern.setAttribute('height',cell);
   pattern.setAttribute('patternUnits','userSpaceOnUse');
   const dot=document.createElementNS(SVGNS,'circle');
-  dot.setAttribute('cx',cell/2);dot.setAttribute('cy',cell/2);dot.setAttribute('r',Math.max(1.1,cell*.035));
-  dot.setAttribute('fill','var(--grid)');dot.setAttribute('opacity','.72');
+  dot.setAttribute('cx',cell/2);dot.setAttribute('cy',cell/2);dot.setAttribute('r',Math.max(1.8,cell*.052));
+  dot.setAttribute('fill','var(--grid)');dot.setAttribute('opacity','.9');
   pattern.appendChild(dot);defs.appendChild(pattern);board.appendChild(defs);
   const grid=document.createElementNS(SVGNS,'rect');
   grid.setAttribute('class','gridBg');grid.setAttribute('x',0);grid.setAttribute('y',0);
