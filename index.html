@@ -130,10 +130,9 @@
 
 <script type="text/plain" id="genSrc">
 /* ---------- generation (reverse construction -> always solvable) ----------
-   v18: doubled board sizes; tiered long-first packing.
-   Long snakes are placed first while the board is open (they need the room),
-   then successively shorter tiers densify the gaps, stopping in the 90-95% window.
-   Hot paths use flat typed arrays (extreme is now 48x64 = 3072 cells). */
+   v23: compact maze texture. Long snakes are placed first, then medium snakes
+   densify the gaps. The grower favors short straight runs followed by tight
+   90-degree turns, especially turns that run beside the snake's own body. */
 function rayClearGen(x,y,dir,mask){const[dx,dy]=DIRS[dir];let cx=x+dx,cy=y+dy;
   while(inb(cx,cy)){if(occ[cy][cx]!==-1||(mask&&mask[cy*cols+cx]))return false;cx+=dx;cy+=dy;}return true;}
 function anyRayClear(x,y,mask){return DK.some(d=>rayClearGen(x,y,d,mask));}
@@ -157,17 +156,22 @@ function dirBetween(a,b){
 }
 function sampleRunTarget(){
   const r=Math.random();
-  if(r<.30)return 2;
-  if(r<.55)return 3;
-  if(r<.72)return 4;
-  if(r<.84)return 5+Math.floor(Math.random()*2);
-  if(r<.94)return 7+Math.floor(Math.random()*5);
-  return Math.max(cols,rows);           // rare full-length corridor
+  if(r<.20)return 2;
+  if(r<.48)return 3;
+  if(r<.80)return 4;
+  return 5;                             // no full-board straightaways
 }
 function wallNeighbors(x,y,mask){
   let n=0;
   for(const d of DK){const nx=x+DIRS[d][0],ny=y+DIRS[d][1];
     if(!inb(nx,ny)||occ[ny][nx]!==-1||mask[ny*cols+nx])n++;}
+  return n;
+}
+function selfContacts(x,y,mask,px,py){
+  let n=0;
+  for(const d of DK){const nx=x+DIRS[d][0],ny=y+DIRS[d][1];
+    if(!inb(nx,ny)||(nx===px&&ny===py))continue;
+    if(mask[ny*cols+nx])n++;}
   return n;
 }
 function placeableHead(x,y,mask){
@@ -213,10 +217,6 @@ function growSnake(hx,hy,dir,target,minAccept,region){
   const bx=hx-DIRS[dir][0],by=hy-DIRS[dir][1];
   const inRegion=(x,y)=>!region||region.has(y*cols+x);
   if(!(inb(bx,by)&&occ[by][bx]===-1&&inRegion(bx,by)))return null;
-  // onion rule: bodies may not dip more than 1 layer shallower than the head.
-  // Filling deepest-first keeps all shallower layers empty, so every future
-  // outward escape ray stays clear by construction. (Repair mode is exempt.)
-  const minDepth=region?0:Math.max(0,depthOf(hx,hy)-1);
   const N=cols*rows,minA=minAccept||2;
   // an arrow is a solid object: its body may never sit on its own escape ray,
   // otherwise the head visually points into itself (and strict physics blocks it)
@@ -234,18 +234,18 @@ function growSnake(hx,hy,dir,target,minAccept,region){
       const[cx,cy]=cells[cells.length-1],opts=[];
       for(const nd of DK){
         if(nd===OPP[last])continue;
+        if(nd===last&&run>=runTarget)continue;      // hard cap straight corridors
         const nx=cx+DIRS[nd][0],ny=cy+DIRS[nd][1];
         if(!inb(nx,ny)||occ[ny][nx]!==-1||mask[ny*cols+nx])continue;
         if(raySet[ny*cols+nx])continue;
         if(region&&!region.has(ny*cols+nx))continue;
-        if(depthOf(nx,ny)<minDepth)continue;
+        const contacts=selfContacts(nx,ny,mask,cx,cy);
         let rhythm;
-        if(nd===last) rhythm=run<runTarget?8.0:.25;
-        else rhythm=run<runTarget?.3:8.0;
-        // depth bias: pack the board center-out so remaining empty space stays
-        // shallow with short outward escape rays (critical on doubled boards)
-        const compact=1+depthOf(nx,ny)*.08;
-        opts.push({nx,ny,nd,w:rhythm*(1+wallNeighbors(nx,ny,mask)*.9)*compact});
+        if(nd===last) rhythm=7.5;
+        else rhythm=run<2?.25:run<5?7.5:10.5;
+        const spiral=1+contacts*(nd===last?.65:2.15);
+        const pocket=1+wallNeighbors(nx,ny,mask)*.55;
+        opts.push({nx,ny,nd,w:rhythm*spiral*pocket});
       }
       if(!opts.length){
         if(cells.length>2){const c=cells.pop();mask[c[1]*cols+c[0]]=0;
@@ -278,13 +278,6 @@ function placeGen(cells,dir,hx,hy){
   genFilled+=cells.length;
   pieces.push({id:genNextId,cells,dir,hx,hy,alive:true});genNextId++;
 }
-function layerCap(x,y){
-  // ~60% of the perimeter of this cell's onion layer: outer snakes may sweep
-  // long, inner snakes are forced short, and no piece can lap its own ring
-  const d=depthOf(x,y);
-  const per=Math.max(8,2*((cols-2*d)+(rows-2*d))-4);
-  return Math.round(per*.6);
-}
 function placePass(tier,goal){
   let placedAny=false;
   const N=cols*rows;
@@ -296,7 +289,7 @@ function placePass(tier,goal){
     dirs.sort(()=>Math.random()-0.5);
     for(const dir of dirs){
       let target=tier.lo+Math.floor(Math.pow(Math.random(),.5)*(tier.hi-tier.lo+1));
-      target=Math.max(tier.min,Math.min(target,layerCap(hx,hy)));
+      target=Math.max(tier.min,Math.min(target,DIFF[diff].maxLen));
       const cells=growSnake(hx,hy,dir,target,tier.min);
       if(cells){placeGen(cells,dir,hx,hy);placedAny=true;break;}
     }
@@ -339,21 +332,15 @@ function repairPass(stopAt){
         if(occ[hy][hx]!==-1)continue;
         const dirs=DK.filter(d=>rayClearGen(hx,hy,d)).sort(()=>Math.random()-.5);
         for(const dir of dirs){
-          const cells=growSnake(hx,hy,dir,Math.min(comp.length,DIFF[diff].maxLen,layerCap(hx,hy)),2,region);
+          const minFill=comp.length>=3?3:2;
+          const cells=growSnake(hx,hy,dir,Math.min(comp.length,DIFF[diff].maxLen),minFill,region);
           if(cells){placeGen(cells,dir,hx,hy);progress=true;done=true;break;}
         }
         if(done)break;
       }
-      if(!done){
-        for(const[x,y]of comp){
-          if(occ[y][x]!==-1)continue;
-          const d=DK.find(dd=>rayClearGen(x,y,dd));
-          if(!d)continue;
-          const m=new Uint8Array(cols*rows);m[y*cols+x]=1;
-          if(!componentsOK(m,1))continue;   // a stub must not kill another region's last head
-          placeGen([[x,y]],d,x,y);progress=true;
-        }
-      }
+      // Do not force single-cell stubs into the last awkward pockets. They
+      // preserve fill percentage, but visually they are exactly the "spaghetti"
+      // clutter this version is trying to avoid.
     }
     if(!progress)return;
   }
@@ -384,6 +371,7 @@ function tryAbsorb(x,y,strict){
      if(ddx!==0?(y===p.hy&&Math.sign(x-p.hx)===ddx):(x===p.hx&&Math.sign(y-p.hy)===ddy))continue;}
     const[tx,ty]=p.cells[p.cells.length-1];
     if(tx!==nx||ty!==ny)continue;               // must attach at the tail
+    if(tailStraightCellsAfter(p,x,y)>7)continue; // absorb must not create long corridors
     // for a 1-cell piece the tail IS the head: only allow the straight-behind cell
     if(p.cells.length===1&&(x!==p.hx-DIRS[p.dir][0]||y!==p.hy-DIRS[p.dir][1]))continue;
     if(strict){
@@ -396,6 +384,19 @@ function tryAbsorb(x,y,strict){
     p.cells.pop();occ[y][x]=-1;
   }
   return false;
+}
+function tailStraightCellsAfter(p,x,y){
+  const L=p.cells.length;
+  if(L<2)return 2;
+  const last=p.cells[L-1];
+  const nd=dirBetween(last,[x,y]);
+  let segs=1;
+  for(let i=L-1;i>0;i--){
+    const d=dirBetween(p.cells[i-1],p.cells[i]);
+    if(d!==nd)break;
+    segs++;
+  }
+  return segs+1;
 }
 function mergeSingles(){
   let changed=true;
@@ -454,7 +455,7 @@ function attemptGenerate(){
     {min:cfg.minLen,lo:cfg.minLen,hi:Math.round(cfg.maxLen*.45),sweeps:6},
     {min:4,lo:4,hi:Math.max(7,cfg.minLen+2),sweeps:4},
     {min:3,lo:3,hi:5,sweeps:3},
-    {min:2,lo:2,hi:3,sweeps:2}
+    {min:2,lo:2,hi:3,sweeps:1}
   ];
   for(let round=0;round<3&&genFilled/N<.90;round++){
     for(const t of tiers){
@@ -532,7 +533,7 @@ const DIFF={
   veryHard:{cols:40,rows:54,minLen:8,maxLen:36,label:"Very Hard"},
   extreme:{cols:48,rows:64,minLen:9,maxLen:46,label:"Extreme"}
 };
-const SAVE_KEY='arrowout_saved_game_v6';
+const SAVE_KEY='arrowout_saved_game_v7';
 const MAX_STRIKES=3;
 const CELL=44;          // fixed board-space cell size; zoom is handled by the SVG viewBox
 // arrow look — tweak freely
